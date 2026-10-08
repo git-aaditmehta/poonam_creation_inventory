@@ -1,0 +1,94 @@
+# =======================================================
+# Poonam Creation — Git Ignore Rules
+# =======================================================
+
+# -------------------------------------------------------
+# Environment Variables, Secrets & Credentials (CRITICAL)
+# -------------------------------------------------------
+.dev.vars*
+*.dev.vars
+!.dev.vars.example
+!*.dev.vars.example
+.env
+.env.*
+*.env
+!*.env.example
+secrets.json
+
+# -------------------------------------------------------
+# Cloudflare & Wrangler Local Runtime & Database Cache
+# -------------------------------------------------------
+.wrangler/
+**/.wrangler/
+wrangler-account.json
+
+# -------------------------------------------------------
+# Node Dependencies
+# -------------------------------------------------------
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# -------------------------------------------------------
+# Build Outputs & Compilation Artifacts
+# -------------------------------------------------------
+dist/
+**/dist/
+dist-ssr/
+build/
+.cache/
+.vite/
+
+# -------------------------------------------------------
+# Logs & Process Artifacts
+# -------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# -------------------------------------------------------
+# Operating System & File System Artifacts
+# -------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# -------------------------------------------------------
+# IDE & Editor Configurations
+# -------------------------------------------------------
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+
+# -------------------------------------------------------
+# Temporary & Scratch Files
+# -------------------------------------------------------
+*.tmp
+*.bak
+*.orig
+/tmp/
+cookies*.txt
+/scratch/
+
+# -------------------------------------------------------
+# Agent / Assistant System Metadata
+# -------------------------------------------------------
+.agents/
+skills-lock.json
+
+final_inventory_management_prd.md
