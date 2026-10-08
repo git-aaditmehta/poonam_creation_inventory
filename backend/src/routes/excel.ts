@@ -16,10 +16,11 @@ excel.use('*', authMiddleware, ownerOnly);
 
 // Default strict column name aliases (case-insensitive matching)
 const COLUMN_ALIASES: Record<string, string[]> = {
-  item_id: ['id', 'item id', 'product id', 'design id', 'design code', 'item name', 'name', 'stone name', 'foil name'],
+  item_id: ['id', 'item id', 'product id', 'design id', 'design code', 'item code', 'stone code', 'foil code', 'item name', 'name', 'stone name', 'foil name'],
   quantity: ['quantity', 'qty', 'stock', 'current stock', 'current quantity'],
-  low_stock_threshold: ['low stock threshold', 'minimum stock', 'min stock', 'threshold', 'low stock', 'min qty'],
-  cost_price: ['cost price', 'cost', 'purchase price', 'price', 'unit price', 'buying price'],
+  unit: ['unit', 'uom'],
+  low_stock_threshold: ['min threshold', 'minimum threshold', 'min_threshold', 'min. threshold', 'low stock threshold', 'minimum stock', 'min stock', 'threshold', 'low stock', 'min qty', 'minimum'],
+  cost_price: ['cost price', 'cost', 'purchase price', 'price', 'unit price', 'buying price', 'cost price (₹)', 'cost price (rs)', 'cost price (inr)'],
 };
 
 /**

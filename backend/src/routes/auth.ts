@@ -20,10 +20,10 @@ auth.post('/login', async (c) => {
     return c.json({ error: 'Username/email and password are required' }, 400);
   }
 
-  // Look up user by username or email
+  // Look up user by username or email (case-insensitive)
   const user = await c.env.DB.prepare(
     `SELECT id, username, email, password_hash, role, is_active
-     FROM users WHERE (username = ? OR email = ?) AND is_active = 1`
+     FROM users WHERE (username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE) AND is_active = 1`
   ).bind(username || '', email || '').first<{
     id: string; username: string; email: string | null;
     password_hash: string; role: 'owner' | 'staff'; is_active: number;
@@ -126,9 +126,9 @@ auth.post('/staff', authMiddleware, ownerOnly, async (c) => {
     return c.json({ error: 'Password must be at least 6 characters' }, 400);
   }
 
-  // Check for duplicate username
+  // Check for duplicate username (case-insensitive)
   const existing = await c.env.DB.prepare(
-    `SELECT id FROM users WHERE username = ?`
+    `SELECT id FROM users WHERE username = ? COLLATE NOCASE`
   ).bind(body.username).first();
   if (existing) {
     return c.json({ error: 'Username already exists' }, 409);
@@ -182,6 +182,27 @@ auth.patch('/staff/:id', authMiddleware, ownerOnly, async (c) => {
       `UPDATE sessions SET is_revoked = 1 WHERE user_id = ? AND is_revoked = 0`
     ).bind(staffId).run();
   }
+
+  return c.json({ success: true });
+});
+
+/** POST /api/auth/staff/:id/password — reset staff password (owner only) */
+auth.post('/staff/:id/password', authMiddleware, ownerOnly, async (c) => {
+  const staffId = c.req.param('id');
+  const body = await c.req.json<{ new_password?: string }>();
+  if (!body.new_password || body.new_password.length < 6) {
+    return c.json({ error: 'Password must be at least 6 characters' }, 400);
+  }
+
+  const passwordHash = await hashPassword(body.new_password);
+  await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ? AND role = 'staff'`
+  ).bind(passwordHash, staffId).run();
+
+  // Revoke existing sessions so staff must log in with new password
+  await c.env.DB.prepare(
+    `UPDATE sessions SET is_revoked = 1 WHERE user_id = ? AND is_revoked = 0`
+  ).bind(staffId).run();
 
   return c.json({ success: true });
 });

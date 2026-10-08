@@ -197,22 +197,30 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               Quick Credentials
             </span>
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn btn-secondary"
-                style={{ flex: 1, fontSize: 12, padding: '7px 10px' }}
+                style={{ flex: '1 1 120px', fontSize: 11, padding: '7px 8px' }}
                 onClick={() => setPreset('nimrocks@gmail.com', 'admin123456')}
               >
-                👑 Owner Account
+                👑 Owner
               </button>
               <button
                 type="button"
                 className="btn btn-secondary"
-                style={{ flex: 1, fontSize: 12, padding: '7px 10px' }}
+                style={{ flex: '1 1 120px', fontSize: 11, padding: '7px 8px' }}
+                onClick={() => setPreset('Anshul', '123456')}
+              >
+                👷 Staff (Anshul)
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ flex: '1 1 120px', fontSize: 11, padding: '7px 8px' }}
                 onClick={() => setPreset('staff1', 'staff123')}
               >
-                👷 Staff Account
+                👷 Staff (staff1)
               </button>
             </div>
           </div>

@@ -13,25 +13,47 @@ backup.use('*', authMiddleware, ownerOnly);
 /**
  * GET /api/backup/master-data
  * Returns JSON data for Excel workbook generation on the client.
- * Sheet 1: Raw Jewelry, Sheet 2: Plated Jewelry
+ * Sheets: Plated Jewelry, Raw Jewelry, Stones, Foil
  */
 backup.get('/master-data', async (c) => {
-  const rawJewelry = await c.env.DB.prepare(
-    `SELECT item_id, quantity, unit, low_stock_threshold FROM raw_jewelry WHERE is_deleted = 0 ORDER BY item_id`
-  ).all();
-
   const platedJewelry = await c.env.DB.prepare(
     `SELECT item_id, quantity, unit, low_stock_threshold, cost_price_cents FROM plated_jewelry WHERE is_deleted = 0 ORDER BY item_id`
   ).all();
 
+  const rawJewelry = await c.env.DB.prepare(
+    `SELECT item_id, quantity, unit, low_stock_threshold FROM raw_jewelry WHERE is_deleted = 0 ORDER BY item_id`
+  ).all();
+
+  const stones = await c.env.DB.prepare(
+    `SELECT item_id, quantity, unit, low_stock_threshold, cost_price_cents FROM stones WHERE is_deleted = 0 ORDER BY item_id`
+  ).all();
+
+  const foil = await c.env.DB.prepare(
+    `SELECT item_id, quantity, unit, low_stock_threshold, cost_price_cents FROM foil WHERE is_deleted = 0 ORDER BY item_id`
+  ).all();
+
   return c.json({
+    plated_jewelry: (platedJewelry.results || []).map(r => ({
+      item_id: r.item_id,
+      quantity: r.quantity,
+      unit: r.unit,
+      low_stock_threshold: r.low_stock_threshold,
+      cost_price: paisaToRupees(r.cost_price_cents as number),
+    })),
     raw_jewelry: (rawJewelry.results || []).map(r => ({
       item_id: r.item_id,
       quantity: r.quantity,
       unit: r.unit,
       low_stock_threshold: r.low_stock_threshold,
     })),
-    plated_jewelry: (platedJewelry.results || []).map(r => ({
+    stones: (stones.results || []).map(r => ({
+      item_id: r.item_id,
+      quantity: r.quantity,
+      unit: r.unit,
+      low_stock_threshold: r.low_stock_threshold,
+      cost_price: paisaToRupees(r.cost_price_cents as number),
+    })),
+    foil: (foil.results || []).map(r => ({
       item_id: r.item_id,
       quantity: r.quantity,
       unit: r.unit,

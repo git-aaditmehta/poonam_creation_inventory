@@ -75,12 +75,26 @@ export const ExcelImportView: React.FC = () => {
     rawRows.forEach((raw, idx) => {
       const itemId = fieldToCol['item_id'] ? String(raw[fieldToCol['item_id']] || '').trim() : '';
       const rawQty = fieldToCol['quantity'] ? raw[fieldToCol['quantity']] : '';
-      const rawThresh = fieldToCol['low_stock_threshold'] ? raw[fieldToCol['low_stock_threshold']] : '';
+
+      // Direct mapped or fallback lookup for threshold
+      let rawThresh = fieldToCol['low_stock_threshold'] ? raw[fieldToCol['low_stock_threshold']] : '';
+      if (rawThresh === '' || rawThresh === undefined) {
+        const threshAliases = ['Min Threshold', 'min threshold', 'Min threshold', 'Low Stock Threshold', 'low stock threshold', 'Threshold', 'threshold', 'Min Stock', 'min stock'];
+        for (const k of threshAliases) {
+          if (raw[k] !== undefined && raw[k] !== '') {
+            rawThresh = raw[k];
+            break;
+          }
+        }
+      }
+
       const rawCost = fieldToCol['cost_price'] ? raw[fieldToCol['cost_price']] : '';
 
       let unit: InventoryUnit | '' = '';
       if (category === 'stones') unit = 'PC';
       else if (category === 'foil') unit = 'KGS';
+      else if (fieldToCol['unit'] && raw[fieldToCol['unit']]) unit = raw[fieldToCol['unit']] as InventoryUnit;
+      else if (raw['Unit'] || raw['unit']) unit = (raw['Unit'] || raw['unit']) as InventoryUnit;
       else unit = 'PC'; // default unit suggestion for plated/raw
 
       rowsToStage.push({

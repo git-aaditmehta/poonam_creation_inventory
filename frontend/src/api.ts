@@ -33,7 +33,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     'Accept': 'application/json',
   };
 
-  const token = localStorage.getItem('session_token');
+  const token = sessionStorage.getItem('session_token') || localStorage.getItem('session_token');
   if (token) {
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
@@ -63,6 +63,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     if (response.status === 401) {
+      sessionStorage.removeItem('session_token');
       localStorage.removeItem('session_token');
       window.dispatchEvent(new CustomEvent('auth-unauthorized'));
     }
@@ -86,6 +87,7 @@ export const api = {
         }),
       });
       if (res.session_token) {
+        sessionStorage.setItem('session_token', res.session_token);
         localStorage.setItem('session_token', res.session_token);
       }
       return res;
@@ -94,6 +96,7 @@ export const api = {
       try {
         return await request<{ success: boolean }>('/api/auth/logout', { method: 'POST' });
       } finally {
+        sessionStorage.removeItem('session_token');
         localStorage.removeItem('session_token');
       }
     },
@@ -232,7 +235,13 @@ export const api = {
 
   // Backups & Storage
   backup: {
-    getMasterData: () => request<{ raw_jewelry: any[]; plated_jewelry: any[] }>('/api/backup/master-data'),
+    getMasterData: () =>
+      request<{
+        plated_jewelry: any[];
+        raw_jewelry: any[];
+        stones: any[];
+        foil: any[];
+      }>('/api/backup/master-data'),
     getTransactions: (date_from?: string, date_to?: string) => {
       const q = new URLSearchParams();
       if (date_from) q.set('date_from', date_from);

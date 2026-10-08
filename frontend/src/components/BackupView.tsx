@@ -50,33 +50,59 @@ export const BackupView: React.FC = () => {
     fetchStorageUsage();
   }, []);
 
-  // Export Master Data (Sheet 1: Raw Jewelry, Sheet 2: Plated Jewelry)
+  // Export Master Data (Sheet 1: Plated Jewelry, Sheet 2: Raw Jewelry, Sheet 3: Stones, Sheet 4: Foil)
   const handleExportMasterData = async () => {
     setIsExportingMaster(true);
     try {
       const res = await api.backup.getMasterData();
       const wb = XLSX.utils.book_new();
 
-      const wsRaw = XLSX.utils.json_to_sheet(
-        res.raw_jewelry.map((r) => ({
-          'Item Code': r.item_id,
-          'Current Quantity': r.quantity,
-          'Unit': r.unit,
-          'Low Stock Threshold': r.low_stock_threshold,
-        }))
-      );
-      XLSX.utils.book_append_sheet(wb, wsRaw, 'Raw_Jewelry');
-
+      // Sheet 1: Plated Jewelry
       const wsPlated = XLSX.utils.json_to_sheet(
-        res.plated_jewelry.map((p) => ({
+        (res.plated_jewelry || []).map((p) => ({
           'Design Code': p.item_id,
           'Current Quantity': p.quantity,
           'Unit': p.unit,
-          'Low Stock Threshold': p.low_stock_threshold,
+          'Min Threshold': p.low_stock_threshold ?? 0,
           'Cost Price (₹)': p.cost_price,
         }))
       );
       XLSX.utils.book_append_sheet(wb, wsPlated, 'Plated_Jewelry');
+
+      // Sheet 2: Raw Jewelry
+      const wsRaw = XLSX.utils.json_to_sheet(
+        (res.raw_jewelry || []).map((r) => ({
+          'Item Code': r.item_id,
+          'Current Quantity': r.quantity,
+          'Unit': r.unit,
+          'Min Threshold': r.low_stock_threshold ?? 0,
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, wsRaw, 'Raw_Jewelry');
+
+      // Sheet 3: Stones
+      const wsStones = XLSX.utils.json_to_sheet(
+        (res.stones || []).map((s) => ({
+          'Stone Code': s.item_id,
+          'Current Quantity': s.quantity,
+          'Unit': s.unit,
+          'Min Threshold': s.low_stock_threshold ?? 0,
+          'Cost Price (₹)': s.cost_price,
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, wsStones, 'Stones');
+
+      // Sheet 4: Foil
+      const wsFoil = XLSX.utils.json_to_sheet(
+        (res.foil || []).map((f) => ({
+          'Foil Code': f.item_id,
+          'Current Quantity': f.quantity,
+          'Unit': f.unit,
+          'Min Threshold': f.low_stock_threshold ?? 0,
+          'Cost Price (₹)': f.cost_price,
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, wsFoil, 'Foil');
 
       const filename = `Poonam_Master_Data_${new Date().toISOString().slice(0, 10)}.xlsx`;
       XLSX.writeFile(wb, filename);
@@ -261,7 +287,7 @@ export const BackupView: React.FC = () => {
         <div className="card">
           <h3 style={{ fontSize: 15, marginBottom: 6 }}>Export Master Data Workbook</h3>
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
-            Download complete catalog snapshot (Raw Jewelry sheet + Plated Jewelry sheet with valuations).
+            Download complete catalog snapshot (Plated Jewelry, Raw Jewelry, Stones, and Foil with valuations).
           </p>
           <button
             onClick={handleExportMasterData}

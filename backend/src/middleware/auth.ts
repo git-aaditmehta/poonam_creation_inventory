@@ -9,12 +9,13 @@ import { hashSessionToken } from '../utils/crypto';
  * and attaches user info to context.
  */
 export async function authMiddleware(c: Context<{ Bindings: Env; Variables: { session: SessionData } }>, next: Next) {
-  let token = getCookie(c, 'session_token');
+  let token: string | undefined;
+  const authHeader = c.req.header('Authorization') || c.req.header('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  }
   if (!token) {
-    const authHeader = c.req.header('Authorization') || c.req.header('authorization');
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      token = authHeader.substring(7).trim();
-    }
+    token = getCookie(c, 'session_token');
   }
 
   if (!token) {
