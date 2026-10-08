@@ -107,10 +107,11 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       if (selectedFile && result?.id) {
         try {
           const processed = await processJewelryImage(selectedFile);
+          const ext = processed.fullBlob.type === 'image/jpeg' ? 'jpg' : 'webp';
           const formData = new FormData();
           formData.append('item_id', result.id);
-          formData.append('full_image', processed.fullBlob, 'full.webp');
-          formData.append('thumb_image', processed.thumbBlob, 'thumb.webp');
+          formData.append('full_image', processed.fullBlob, `full.${ext}`);
+          formData.append('thumb_image', processed.thumbBlob, `thumb.${ext}`);
           await api.images.upload(formData);
         } catch (imgErr: any) {
           showToast('warning', 'Item created, image failed', imgErr.message);
@@ -174,6 +175,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       setPreviewThumb(processed.thumbDataUrl);
     } catch (err: any) {
       showToast('error', 'Image Processing Failed', err.message);
+    } finally {
+      // Clear input value so selecting or capturing another photo with identical filename triggers onChange reliably on mobile
+      e.target.value = '';
     }
   };
 
@@ -184,10 +188,11 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     setIsUploading(true);
     try {
       const processed = await processJewelryImage(selectedFile);
+      const ext = processed.fullBlob.type === 'image/jpeg' ? 'jpg' : 'webp';
       const formData = new FormData();
       formData.append('item_id', activeItem.id);
-      formData.append('full_image', processed.fullBlob, 'full.webp');
-      formData.append('thumb_image', processed.thumbBlob, 'thumb.webp');
+      formData.append('full_image', processed.fullBlob, `full.${ext}`);
+      formData.append('thumb_image', processed.thumbBlob, `thumb.${ext}`);
       const uploadRes = await api.images.upload(formData);
       showToast('success', 'Image Uploaded', `Image saved for ${activeItem.item_id}`);
       if (detailItem && detailItem.id === activeItem.id) {
