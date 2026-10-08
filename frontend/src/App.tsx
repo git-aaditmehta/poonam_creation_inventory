@@ -21,8 +21,19 @@ const AppContent: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('plated');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    return localStorage.getItem('sidebar_collapsed') === 'true';
+  });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [lowStockCount, setLowStockCount] = useState(0);
+
+  const handleSetSidebarCollapsed = (collapsed: boolean | ((prev: boolean) => boolean)) => {
+    setSidebarCollapsed((prev) => {
+      const next = typeof collapsed === 'function' ? collapsed(prev) : collapsed;
+      localStorage.setItem('sidebar_collapsed', String(next));
+      return next;
+    });
+  };
 
   // Quick action prefill state for Stock Operations
   const [opCategory, setOpCategory] = useState<InventoryCategory>('plated_jewelry');
@@ -114,11 +125,13 @@ const AppContent: React.FC = () => {
         setActiveTab={setActiveTab}
         onLogout={handleLogout}
         lowStockCount={lowStockCount}
-        sidebarOpen={sidebarOpen}
-        setSidebarOpen={setSidebarOpen}
+        sidebarCollapsed={sidebarCollapsed}
+        setSidebarCollapsed={handleSetSidebarCollapsed}
+        mobileMenuOpen={mobileMenuOpen}
+        setMobileMenuOpen={setMobileMenuOpen}
       />
 
-      <main className="main-content">
+      <main className={`main-content ${sidebarCollapsed ? 'collapsed' : ''}`}>
         {activeTab === 'plated' && (
           <PlatedJewelryView
             user={currentUser}
