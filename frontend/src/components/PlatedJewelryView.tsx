@@ -141,12 +141,22 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     );
     if (nextUnsaved !== -1) {
       setCurrentQueueIndex(nextUnsaved);
+      setFormItemId('');
+      setFormQty('');
+      setFormThreshold('');
+      setFormCost('');
+      setFormUnit('PC');
     } else {
       const anyOther = imageQueue.findIndex(
         (item, idx) => idx !== currentQueueIndex && item.status !== 'saved'
       );
       if (anyOther !== -1) {
         setCurrentQueueIndex(anyOther);
+        setFormItemId('');
+        setFormQty('');
+        setFormThreshold('');
+        setFormCost('');
+        setFormUnit('PC');
       }
     }
   };
@@ -236,6 +246,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
           setCurrentQueueIndex(nextIndex);
           setFormItemId('');
           setFormQty('');
+          setFormThreshold('');
+          setFormCost('');
+          setFormUnit('PC');
         } else {
           showToast('success', 'Batch Complete', `All ${imageQueue.length} items created successfully!`);
           setIsCreateOpen(false);
