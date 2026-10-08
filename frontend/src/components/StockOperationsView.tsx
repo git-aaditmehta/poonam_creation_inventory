@@ -144,7 +144,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '800px', margin: '0 auto', width: '100%' }}>
+    <div className="view-container">
       {/* Title */}
       <div style={{ marginBottom: 24, textAlign: 'center' }}>
         <h2 style={{ fontSize: 24, fontWeight: 700 }}>⚡ Stock Operations Center</h2>

@@ -135,7 +135,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+    <div className="view-container">
       {/* Header */}
       <div
         style={{

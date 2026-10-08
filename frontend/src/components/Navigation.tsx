@@ -62,14 +62,6 @@ export const Navigation: React.FC<NavigationProps> = ({
     setMobileMenuOpen(false);
   };
 
-  const toggleSidebar = () => {
-    if (window.innerWidth <= 900) {
-      setMobileMenuOpen((prev) => !prev);
-    } else {
-      setSidebarCollapsed((prev) => !prev);
-    }
-  };
-
   return (
     <>
       {/* Mobile Backdrop */}
@@ -307,52 +299,6 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       </aside>
 
-      {/* Top Header */}
-      <header className="top-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button
-            onClick={toggleSidebar}
-            className="header-menu-btn"
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-label="Toggle sidebar"
-          >
-            <Menu size={20} />
-          </button>
-          <div>
-            <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-              {activeTab === 'plated' && 'Plated Jewelry'}
-              {activeTab === 'raw' && 'Raw Jewelry Casting'}
-              {activeTab === 'stones' && 'Precious & Synthetic Stones'}
-              {activeTab === 'foil' && 'Silver & Metal Foil'}
-              {activeTab === 'operations' && 'Stock Operations'}
-              {activeTab === 'low-stock' && 'Low Stock Center'}
-              {activeTab === 'history' && 'Transaction History Audit'}
-              {activeTab === 'excel' && 'Excel Import & Staging'}
-              {activeTab === 'staff' && 'Staff Accounts'}
-              {activeTab === 'backup' && 'System Storage & Backup'}
-            </span>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {isOwner ? (
-            <span className="badge badge-gold">Owner</span>
-          ) : (
-            <span className="badge badge-emerald">Staff</span>
-          )}
-          {isOwner && lowStockCount > 0 && (
-            <button
-              onClick={() => setActiveTab('low-stock')}
-              className="badge badge-amber"
-              style={{ cursor: 'pointer', border: 'none' }}
-              title="View low stock items"
-            >
-              ⚠️ {lowStockCount} Low
-            </button>
-          )}
-        </div>
-      </header>
-
       {/* Mobile Bottom Navigation Bar */}
       <nav className="mobile-bottom-nav">
         <button
@@ -392,5 +338,82 @@ export const Navigation: React.FC<NavigationProps> = ({
         </button>
       </nav>
     </>
+  );
+};
+
+export interface TopHeaderProps {
+  user: User;
+  activeTab: ActiveTab;
+  setActiveTab: (tab: ActiveTab) => void;
+  lowStockCount: number;
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
+  setMobileMenuOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+}
+
+export const TopHeader: React.FC<TopHeaderProps> = ({
+  user,
+  activeTab,
+  setActiveTab,
+  lowStockCount,
+  sidebarCollapsed,
+  setSidebarCollapsed,
+  setMobileMenuOpen,
+}) => {
+  const isOwner = user.role === 'owner';
+
+  const toggleSidebar = () => {
+    if (window.innerWidth <= 900) {
+      setMobileMenuOpen((prev) => !prev);
+    } else {
+      setSidebarCollapsed((prev) => !prev);
+    }
+  };
+
+  return (
+    <header className="top-header">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <button
+          onClick={toggleSidebar}
+          className="header-menu-btn"
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label="Toggle sidebar"
+        >
+          <Menu size={20} />
+        </button>
+        <div>
+          <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
+            {activeTab === 'plated' && 'Plated Jewelry'}
+            {activeTab === 'raw' && 'Raw Jewelry Casting'}
+            {activeTab === 'stones' && 'Precious & Synthetic Stones'}
+            {activeTab === 'foil' && 'Silver & Metal Foil'}
+            {activeTab === 'operations' && 'Stock Operations'}
+            {activeTab === 'low-stock' && 'Low Stock Center'}
+            {activeTab === 'history' && 'Transaction History Audit'}
+            {activeTab === 'excel' && 'Excel Import & Staging'}
+            {activeTab === 'staff' && 'Staff Accounts'}
+            {activeTab === 'backup' && 'System Storage & Backup'}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {isOwner ? (
+          <span className="badge badge-gold">Owner</span>
+        ) : (
+          <span className="badge badge-emerald">Staff</span>
+        )}
+        {isOwner && lowStockCount > 0 && (
+          <button
+            onClick={() => setActiveTab('low-stock')}
+            className="badge badge-amber"
+            style={{ cursor: 'pointer', border: 'none' }}
+            title="View low stock items"
+          >
+            ⚠️ {lowStockCount} Low
+          </button>
+        )}
+      </div>
+    </header>
   );
 };

@@ -155,7 +155,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+    <div className="view-container">
       {/* Header */}
       <div
         style={{

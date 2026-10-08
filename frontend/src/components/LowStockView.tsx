@@ -28,7 +28,7 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
   }, [showToast]);
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+    <div className="view-container">
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

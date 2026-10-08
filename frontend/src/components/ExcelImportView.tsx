@@ -268,7 +268,7 @@ export const ExcelImportView: React.FC = () => {
   const committedCount = stagingQueue.filter((r) => r.status === 'committed').length;
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+    <div className="view-container">
       {/* Title */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

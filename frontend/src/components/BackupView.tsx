@@ -224,7 +224,7 @@ export const BackupView: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+    <div className="view-container">
       {/* Title */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

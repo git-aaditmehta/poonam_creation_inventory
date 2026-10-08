@@ -3,7 +3,7 @@ import { api } from './api';
 import type { User, InventoryCategory, BaseInventoryItem } from './types';
 import { ToastProvider, useToast } from './context/ToastContext';
 import { LoginView } from './components/LoginView';
-import { Navigation, type ActiveTab } from './components/Navigation';
+import { Navigation, TopHeader, type ActiveTab } from './components/Navigation';
 import { PlatedJewelryView } from './components/PlatedJewelryView';
 import { RawJewelryView } from './components/RawJewelryView';
 import { StonesView } from './components/StonesView';
@@ -131,7 +131,18 @@ const AppContent: React.FC = () => {
         setMobileMenuOpen={setMobileMenuOpen}
       />
 
-      <main className={`main-content ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      <div className={`main-area ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <TopHeader
+          user={currentUser}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          lowStockCount={lowStockCount}
+          sidebarCollapsed={sidebarCollapsed}
+          setSidebarCollapsed={handleSetSidebarCollapsed}
+          setMobileMenuOpen={setMobileMenuOpen}
+        />
+
+        <main className="main-content">
         {activeTab === 'plated' && (
           <PlatedJewelryView
             user={currentUser}
@@ -181,7 +192,8 @@ const AppContent: React.FC = () => {
         {activeTab === 'backup' && currentUser.role === 'owner' && (
           <BackupView />
         )}
-      </main>
+        </main>
+      </div>
     </div>
   );
 };
