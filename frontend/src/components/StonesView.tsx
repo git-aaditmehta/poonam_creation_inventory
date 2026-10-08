@@ -168,7 +168,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
         }}
       >
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Precious & Synthetic Stones</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Precious & Synthetic Stones</h2>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
             Gemstone varieties, zirconias, and synthetic stones (counted in pieces / PC).
           </p>
@@ -187,12 +187,12 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
                 gap: 8,
               }}
             >
-              <IndianRupee size={16} color="var(--gold-primary)" />
+              <IndianRupee size={16} color="var(--teal-deep)" />
               <div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                   Stones Valuation
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--gold-primary)' }} className="mono">
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--teal-deep)' }} className="mono">
                   ₹{valuation.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </div>
               </div>
@@ -294,7 +294,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
                     <span className="badge badge-gold">PC</span>
                   </td>
                   {isOwner && (
-                    <td className="mono" style={{ color: 'var(--gold-primary)', fontWeight: 600 }}>
+                    <td className="mono" style={{ color: 'var(--teal-deep)', fontWeight: 600 }}>
                       ₹{item.cost_price !== undefined ? item.cost_price.toFixed(2) : '—'}
                     </td>
                   )}

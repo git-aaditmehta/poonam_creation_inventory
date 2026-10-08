@@ -112,7 +112,7 @@ export const StaffManagementView: React.FC = () => {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Users size={24} color="var(--gold-primary)" />
-            <h2 style={{ fontSize: 22, fontWeight: 800 }}>Staff Account Management</h2>
+            <h2 style={{ fontSize: 22, fontWeight: 700 }}>Staff Account Management</h2>
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
             Control staff access credentials and authorization state.

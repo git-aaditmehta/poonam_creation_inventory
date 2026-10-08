@@ -50,56 +50,55 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'radial-gradient(ellipse at 50% 20%, #1a1e2b 0%, #0b0d11 70%)',
+        background: 'var(--bg-base)',
         padding: '24px 16px',
       }}
     >
       <div
         style={{
           width: '100%',
-          maxWidth: '440px',
+          maxWidth: '420px',
           background: 'var(--bg-surface-1)',
-          border: '1px solid var(--border-medium)',
-          borderRadius: 'var(--radius-lg)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-lg)',
           overflow: 'hidden',
         }}
       >
-        {/* Header Banner */}
+        {/* Header */}
         <div
           style={{
-            padding: '36px 32px 24px',
+            padding: '40px 32px 28px',
             textAlign: 'center',
             borderBottom: '1px solid var(--border-subtle)',
-            background: 'linear-gradient(180deg, rgba(212, 163, 89, 0.08) 0%, transparent 100%)',
           }}
         >
           <div
             style={{
-              width: 52,
-              height: 52,
+              width: 50,
+              height: 50,
               borderRadius: 14,
-              background: 'linear-gradient(135deg, #d4a359 0%, #b8863d 100%)',
-              color: '#0b0d11',
+              background: 'var(--teal-deep)',
+              color: 'var(--text-inverse)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              margin: '0 auto 16px',
-              boxShadow: '0 4px 20px rgba(212, 163, 89, 0.4)',
+              margin: '0 auto 18px',
+              boxShadow: '0 4px 16px rgba(27, 58, 75, 0.25)',
             }}
           >
-            <Sparkles size={28} />
+            <Sparkles size={24} />
           </div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>
             Poonam Creation
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>
-            Inventory Atelier & Manufacturing Management
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+            Inventory Management System
           </p>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} style={{ padding: '32px' }}>
+        {/* Form */}
+        <form onSubmit={handleSubmit} style={{ padding: '28px 32px' }}>
           {errorMessage && (
             <div
               style={{
@@ -172,7 +171,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             type="submit"
             className="btn btn-primary"
             disabled={isLoading}
-            style={{ width: '100%', marginTop: 12, padding: '12px', fontSize: 14 }}
+            style={{ width: '100%', marginTop: 12, padding: '11px', fontSize: 14 }}
           >
             {isLoading ? (
               <>
@@ -180,12 +179,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               </>
             ) : (
               <>
-                Sign In to Atelier <ArrowRight size={16} />
+                Sign In <ArrowRight size={16} />
               </>
             )}
           </button>
 
-          {/* Quick Credential Switcher for Development */}
+          {/* Quick Credential Switcher */}
           <div
             style={{
               marginTop: 28,
@@ -194,8 +193,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               textAlign: 'center',
             }}
           >
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Quick Credentials
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Quick Login
             </span>
             <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
               <button

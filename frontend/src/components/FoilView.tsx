@@ -168,7 +168,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
         }}
       >
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Silver & Metal Foil Stock</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Silver & Metal Foil Stock</h2>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
             Raw silver foil rolls and plating foils (weighted in kilograms / KGS).
           </p>
@@ -187,12 +187,12 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
                 gap: 8,
               }}
             >
-              <IndianRupee size={16} color="var(--gold-primary)" />
+              <IndianRupee size={16} color="var(--teal-deep)" />
               <div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                   Foil Valuation
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--gold-primary)' }} className="mono">
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--teal-deep)' }} className="mono">
                   ₹{valuation.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                 </div>
               </div>
@@ -294,7 +294,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
                     <span className="badge badge-gold">KGS</span>
                   </td>
                   {isOwner && (
-                    <td className="mono" style={{ color: 'var(--gold-primary)', fontWeight: 600 }}>
+                    <td className="mono" style={{ color: 'var(--teal-deep)', fontWeight: 600 }}>
                       ₹{item.cost_price !== undefined ? item.cost_price.toFixed(2) : '—'}
                     </td>
                   )}

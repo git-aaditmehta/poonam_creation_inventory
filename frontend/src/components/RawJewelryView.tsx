@@ -148,9 +148,9 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
         }}
       >
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Raw Jewelry Casting</h2>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Unpolished raw castings & metal molds tracking.
+          <h2 style={{ fontSize: 20, fontWeight: 700 }}>Raw Jewelry</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
+            {total} casting designs tracked
           </p>
         </div>
 

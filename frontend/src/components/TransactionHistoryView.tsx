@@ -106,7 +106,7 @@ export const TransactionHistoryView: React.FC = () => {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <History size={24} color="var(--gold-primary)" />
-            <h2 style={{ fontSize: 22, fontWeight: 800 }}>Transaction Audit Trail</h2>
+            <h2 style={{ fontSize: 22, fontWeight: 700 }}>Transaction Audit Trail</h2>
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
             Immutable, sequential record of every stock movement and adjustment.
@@ -139,7 +139,7 @@ export const TransactionHistoryView: React.FC = () => {
             <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
               Total Stock Inflow
             </div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--emerald-text)' }} className="mono">
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--emerald-text)' }} className="mono">
               +{totals.total_added} units
             </div>
           </div>
@@ -164,7 +164,7 @@ export const TransactionHistoryView: React.FC = () => {
             <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
               Total Stock Outflow
             </div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--rose-text)' }} className="mono">
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--rose-text)' }} className="mono">
               -{totals.total_subtracted} units
             </div>
           </div>
@@ -335,7 +335,7 @@ export const TransactionHistoryView: React.FC = () => {
                   <td>
                     <span
                       style={{
-                        fontWeight: 800,
+                        fontWeight: 700,
                         fontSize: 14,
                         color: t.operation === 'add' ? 'var(--emerald-text)' : 'var(--rose-text)',
                       }}

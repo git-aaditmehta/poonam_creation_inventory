@@ -92,3 +92,6 @@ cookies*.txt
 skills-lock.json
 
 final_inventory_management_prd.md
+
+venv/
+graphify-out/

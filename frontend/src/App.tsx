@@ -105,9 +105,9 @@ const AppContent: React.FC = () => {
           color: 'var(--text-primary)',
         }}
       >
-        <Loader2 size={36} className="animate-spin" color="var(--gold-primary)" />
+        <Loader2 size={36} className="animate-spin" color="var(--teal-deep)" />
         <div style={{ marginTop: 16, fontSize: 14, color: 'var(--text-secondary)' }}>
-          Connecting to Poonam Creation Atelier...
+          Connecting to Poonam Creation...
         </div>
       </div>
     );

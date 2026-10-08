@@ -147,7 +147,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
     <div style={{ padding: '24px', maxWidth: '800px', margin: '0 auto', width: '100%' }}>
       {/* Title */}
       <div style={{ marginBottom: 24, textAlign: 'center' }}>
-        <h2 style={{ fontSize: 24, fontWeight: 800 }}>⚡ Stock Operations Center</h2>
+        <h2 style={{ fontSize: 24, fontWeight: 700 }}>⚡ Stock Operations Center</h2>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
           Atomic add & subtract transactions with real-time balance validation.
         </p>
@@ -301,7 +301,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                   Current Autoritative Stock
                 </span>
-                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)' }} className="mono">
+                <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }} className="mono">
                   {selectedItem.item_id}
                 </div>
               </div>
@@ -311,7 +311,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
                 <div
                   style={{
                     fontSize: 22,
-                    fontWeight: 800,
+                    fontWeight: 700,
                     color: selectedItem.quantity < selectedItem.low_stock_threshold ? 'var(--amber-text)' : 'var(--emerald-text)',
                   }}
                   className="mono"
@@ -406,7 +406,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
               }}
             >
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Projected Balance:</div>
-              <div style={{ fontSize: 16, fontWeight: 800 }} className="mono">
+              <div style={{ fontSize: 16, fontWeight: 700 }} className="mono">
                 <span style={{ color: 'var(--text-muted)' }}>{currentQty}</span>
                 <span style={{ color: operation === 'add' ? 'var(--emerald-text)' : 'var(--rose-text)', margin: '0 6px' }}>
                   {operation === 'add' ? '+' : '-'} {quantity}

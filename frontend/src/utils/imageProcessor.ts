@@ -22,32 +22,36 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
         try {
           // Process Full (Max 1200px)
           const { canvas: fullCanvas } = resizeToCanvas(img, 1200, 1200);
-          const fullDataUrl = fullCanvas.toDataURL('image/webp', 0.85);
+          let fullDataUrl = '';
+          try {
+            fullDataUrl = fullCanvas.toDataURL('image/webp', 0.85);
+          } catch {
+            fullDataUrl = fullCanvas.toDataURL('image/jpeg', 0.85);
+          }
 
-          // Process Thumb (Max 200px square crop or aspect fit)
+          // Process Thumb (Max 240px aspect fit)
           const { canvas: thumbCanvas } = resizeToCanvas(img, 240, 240);
-          const thumbDataUrl = thumbCanvas.toDataURL('image/webp', 0.80);
+          let thumbDataUrl = '';
+          try {
+            thumbDataUrl = thumbCanvas.toDataURL('image/webp', 0.80);
+          } catch {
+            thumbDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.80);
+          }
 
-          fullCanvas.toBlob(
-            (fullBlob) => {
-              if (!fullBlob) return reject(new Error('Failed to generate full image blob'));
-              thumbCanvas.toBlob(
-                (thumbBlob) => {
-                  if (!thumbBlob) return reject(new Error('Failed to generate thumb blob'));
+          canvasToBlobSafe(fullCanvas, 0.85)
+            .then((fullBlob) => {
+              canvasToBlobSafe(thumbCanvas, 0.80)
+                .then((thumbBlob) => {
                   resolve({
                     fullBlob,
                     thumbBlob,
                     fullDataUrl,
                     thumbDataUrl,
                   });
-                },
-                'image/webp',
-                0.80
-              );
-            },
-            'image/webp',
-            0.85
-          );
+                })
+                .catch(reject);
+            })
+            .catch(reject);
         } catch (err) {
           reject(err);
         }
@@ -55,6 +59,19 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
       img.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
+  });
+}
+
+function canvasToBlobSafe(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) return resolve(blob);
+      // Fallback to JPEG if WebP is unsupported or fails
+      canvas.toBlob((jpegBlob) => {
+        if (jpegBlob) return resolve(jpegBlob);
+        reject(new Error('Failed to generate image blob from canvas'));
+      }, 'image/jpeg', quality);
+    }, 'image/webp', quality);
   });
 }
 

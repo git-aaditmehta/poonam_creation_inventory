@@ -33,7 +33,7 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <AlertTriangle size={24} color="var(--amber-text)" />
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Low Stock Alert Center</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Low Stock Alert Center</h2>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
           Items currently below safe threshold across all 4 manufacturing categories.
@@ -88,7 +88,7 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
                       </div>
                     </td>
                     <td>
-                      <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--rose-text)' }} className="mono">
+                      <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--rose-text)' }} className="mono">
                         {item.quantity} {item.unit}
                       </span>
                     </td>

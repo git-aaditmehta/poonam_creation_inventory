@@ -229,7 +229,7 @@ export const BackupView: React.FC = () => {
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <Database size={24} color="var(--gold-primary)" />
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Backup, Storage & Data Safety</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Backup, Storage & Data Safety</h2>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
           Cloudflare D1 & R2 storage metrics, Excel workbooks, and verified history deletion.
@@ -247,7 +247,7 @@ export const BackupView: React.FC = () => {
             <Loader2 size={16} className="animate-spin" />
           ) : usage ? (
             <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--gold-primary)' }} className="mono">
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--gold-primary)' }} className="mono">
                 {usage.d1.total_rows} Total Rows
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -268,7 +268,7 @@ export const BackupView: React.FC = () => {
             <Loader2 size={16} className="animate-spin" />
           ) : usage ? (
             <div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--emerald-text)' }} className="mono">
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--emerald-text)' }} className="mono">
                 {usage.r2.object_count} Images ({usage.r2.total_size_mb} MB)
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>

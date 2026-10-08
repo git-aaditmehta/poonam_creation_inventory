@@ -273,7 +273,7 @@ export const ExcelImportView: React.FC = () => {
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <FileSpreadsheet size={24} color="var(--gold-primary)" />
-          <h2 style={{ fontSize: 22, fontWeight: 800 }}>Excel Import & Safe Staging Queue</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Excel Import & Safe Staging Queue</h2>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
           Client-side parsing with independent Worker validation. Rows stage safely before D1 commits.

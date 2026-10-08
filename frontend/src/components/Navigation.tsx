@@ -99,11 +99,11 @@ export const Navigation: React.FC<NavigationProps> = ({
             </div>
             {!sidebarCollapsed && (
               <div className="brand-text">
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-primary)' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#FFFFFF' }}>
                   Poonam Creation
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                  Inventory Atelier
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                  Inventory System
                 </div>
               </div>
             )}
@@ -194,11 +194,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                   style={{ display: 'flex', justifyContent: sidebarCollapsed ? 'center' : 'space-between' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <AlertTriangle size={18} color="var(--amber-text)" />
+                    <AlertTriangle size={18} color="#F59E0B" />
                     <span>Low Stock Alert</span>
                   </div>
                   {!sidebarCollapsed && lowStockCount > 0 && (
-                    <span className="badge badge-amber">{lowStockCount}</span>
+                    <span style={{ background: 'rgba(245,158,11,0.2)', color: '#F59E0B', padding: '2px 8px', borderRadius: '9999px', fontSize: 11, fontWeight: 600 }}>{lowStockCount}</span>
                   )}
                 </button>
                 <button
@@ -256,12 +256,12 @@ export const Navigation: React.FC<NavigationProps> = ({
                 height: 34,
                 minWidth: 34,
                 borderRadius: '50%',
-                background: isOwner ? 'var(--gold-light)' : 'var(--emerald-bg)',
-                border: `1px solid ${isOwner ? 'var(--gold-border)' : 'var(--emerald-border)'}`,
+                background: 'rgba(255,255,255,0.10)',
+                border: '1px solid rgba(255,255,255,0.12)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: isOwner ? 'var(--gold-primary)' : 'var(--emerald-text)',
+                color: 'rgba(255,255,255,0.8)',
               }}
             >
               {isOwner ? <ShieldCheck size={18} /> : <UserCheck size={18} />}
@@ -272,7 +272,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   style={{
                     fontSize: 13,
                     fontWeight: 600,
-                    color: 'var(--text-primary)',
+                    color: '#FFFFFF',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -280,16 +280,25 @@ export const Navigation: React.FC<NavigationProps> = ({
                 >
                   {user.username || user.email}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                  {user.role} role
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'capitalize' }}>
+                  {user.role}
                 </div>
               </div>
             )}
           </div>
           <button
             onClick={onLogout}
-            className="btn btn-secondary"
-            style={{ padding: sidebarCollapsed ? '6px' : '6px 10px', fontSize: 12 }}
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.10)',
+              color: 'rgba(255,255,255,0.6)',
+              cursor: 'pointer',
+              borderRadius: 'var(--radius-sm)',
+              padding: sidebarCollapsed ? '6px' : '6px 10px',
+              fontSize: 12,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'all 0.15s',
+            }}
             title="Log out"
             aria-label="Log out"
           >
@@ -327,9 +336,9 @@ export const Navigation: React.FC<NavigationProps> = ({
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {isOwner ? (
-            <span className="badge badge-gold">👑 Owner View</span>
+            <span className="badge badge-gold">Owner</span>
           ) : (
-            <span className="badge badge-emerald">👷 Staff View</span>
+            <span className="badge badge-emerald">Staff</span>
           )}
           {isOwner && lowStockCount > 0 && (
             <button
