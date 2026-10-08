@@ -61,7 +61,7 @@ auth.post('/login', async (c) => {
   setCookie(c, 'session_token', rawToken, {
     httpOnly: true,
     secure: isHttps,
-    sameSite: 'Lax',
+    sameSite: isHttps ? 'None' : 'Lax',
     path: '/',
     maxAge: SESSION_DURATION_HOURS * 60 * 60,
   });
@@ -80,7 +80,12 @@ auth.post('/logout', authMiddleware, async (c) => {
     `UPDATE sessions SET is_revoked = 1 WHERE id = ?`
   ).bind(session.sessionId).run();
 
-  deleteCookie(c, 'session_token', { path: '/' });
+  const isHttps = c.req.url.startsWith('https://') || c.req.header('x-forwarded-proto') === 'https';
+  deleteCookie(c, 'session_token', {
+    path: '/',
+    secure: isHttps,
+    sameSite: isHttps ? 'None' : 'Lax',
+  });
   return c.json({ success: true });
 });
 
