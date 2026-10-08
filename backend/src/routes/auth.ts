@@ -9,7 +9,7 @@ import { authMiddleware, ownerOnly } from '../middleware/auth';
 
 const auth = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
-const SESSION_DURATION_HOURS = 24;
+const SESSION_DURATION_HOURS = 72; // 3 days
 
 /** POST /api/auth/login */
 auth.post('/login', async (c) => {
