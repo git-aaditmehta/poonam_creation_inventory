@@ -248,7 +248,7 @@ export const BackupView: React.FC = () => {
           ) : usage ? (
             <div>
               <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--gold-primary)' }} className="mono">
-                {usage.d1.total_rows} Total Rows
+                {usage.d1.total_rows} Rows ({usage.d1.total_size_mb && usage.d1.total_size_mb >= 0.1 ? `${usage.d1.total_size_mb} MB` : `${usage.d1.total_size_kb || 0} KB`})
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
                 Plated: {usage.d1.table_counts.plated_jewelry || 0} · Raw: {usage.d1.table_counts.raw_jewelry || 0} · Stones: {usage.d1.table_counts.stones || 0} · Foil: {usage.d1.table_counts.foil || 0} · Transactions: {usage.d1.table_counts.transactions || 0}

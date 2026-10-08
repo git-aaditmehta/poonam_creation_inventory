@@ -20,27 +20,20 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
       img.onerror = () => reject(new Error('Failed to load image into DOM'));
       img.onload = () => {
         try {
-          // Process Full (Max 1200px)
-          const { canvas: fullCanvas } = resizeToCanvas(img, 1200, 1200);
-          let fullDataUrl = '';
-          try {
-            fullDataUrl = fullCanvas.toDataURL('image/webp', 0.85);
-          } catch {
-            fullDataUrl = fullCanvas.toDataURL('image/jpeg', 0.85);
-          }
+          // Detect if WebP export is supported by browser; if not, use JPEG
+          const format = isWebPExportSupported() ? 'image/webp' : 'image/jpeg';
 
-          // Process Thumb (Max 240px aspect fit)
-          const { canvas: thumbCanvas } = resizeToCanvas(img, 240, 240);
-          let thumbDataUrl = '';
-          try {
-            thumbDataUrl = thumbCanvas.toDataURL('image/webp', 0.80);
-          } catch {
-            thumbDataUrl = thumbCanvas.toDataURL('image/jpeg', 0.80);
-          }
+          // Process Full (Max 900px — crisp 2x retina on all mobile & laptops, ~50-70KB)
+          const { canvas: fullCanvas } = resizeToCanvas(img, 900, 900);
+          const fullDataUrl = fullCanvas.toDataURL(format, 0.75);
 
-          canvasToBlobSafe(fullCanvas, 0.85)
+          // Process Thumb (Max 200px aspect fit, ~10KB)
+          const { canvas: thumbCanvas } = resizeToCanvas(img, 200, 200);
+          const thumbDataUrl = thumbCanvas.toDataURL(format, 0.70);
+
+          canvasToBlobSafe(fullCanvas, 0.75, format)
             .then((fullBlob) => {
-              canvasToBlobSafe(thumbCanvas, 0.80)
+              canvasToBlobSafe(thumbCanvas, 0.70, format)
                 .then((thumbBlob) => {
                   resolve({
                     fullBlob,
@@ -62,16 +55,31 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
   });
 }
 
-function canvasToBlobSafe(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+/** Check if the current browser's canvas natively encodes WebP */
+function isWebPExportSupported(): boolean {
+  try {
+    const testCanvas = document.createElement('canvas');
+    testCanvas.width = 1;
+    testCanvas.height = 1;
+    return testCanvas.toDataURL('image/webp').startsWith('data:image/webp');
+  } catch {
+    return false;
+  }
+}
+
+function canvasToBlobSafe(canvas: HTMLCanvasElement, quality: number, preferredFormat: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
-      if (blob) return resolve(blob);
-      // Fallback to JPEG if WebP is unsupported or fails
+      // If browser respected the format and didn't fall back to uncompressed PNG
+      if (blob && (blob.type === 'image/webp' || blob.type === 'image/jpeg')) {
+        return resolve(blob);
+      }
+      // If browser silently fell back to uncompressed image/png, re-encode as image/jpeg
       canvas.toBlob((jpegBlob) => {
         if (jpegBlob) return resolve(jpegBlob);
-        reject(new Error('Failed to generate image blob from canvas'));
+        reject(new Error('Failed to generate compressed image blob from canvas'));
       }, 'image/jpeg', quality);
-    }, 'image/webp', quality);
+    }, preferredFormat, quality);
   });
 }
 

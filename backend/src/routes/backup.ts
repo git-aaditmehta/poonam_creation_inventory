@@ -108,8 +108,27 @@ backup.get('/storage-usage', async (c) => {
     counts[table] = result?.count || 0;
   }
 
-  // Get D1 database size estimate (row counts × estimated avg row size)
+  // Get D1 database size estimate & exact page size if available
   const totalRows = Object.values(counts).reduce((a, b) => a + b, 0);
+  let d1SizeBytes = 0;
+  try {
+    const pageCountRes = await c.env.DB.prepare('PRAGMA page_count').first();
+    const pageSizeRes = await c.env.DB.prepare('PRAGMA page_size').first();
+    const pageCount = (pageCountRes ? Object.values(pageCountRes)[0] : 0) as number;
+    const pageSize = (pageSizeRes ? Object.values(pageSizeRes)[0] : 4096) as number;
+    if (pageCount && pageSize) {
+      d1SizeBytes = pageCount * pageSize;
+    }
+  } catch {
+    // Fallback if PRAGMA is restricted in certain environments
+    d1SizeBytes = Math.max(65536, (totalRows * 280) + (tables.length * 4096));
+  }
+  if (!d1SizeBytes) {
+    d1SizeBytes = Math.max(65536, (totalRows * 280) + (tables.length * 4096));
+  }
+
+  const d1TotalKb = Math.round((d1SizeBytes / 1024) * 100) / 100;
+  const d1TotalMb = Math.round((d1SizeBytes / (1024 * 1024)) * 100) / 100;
 
   // R2 object count
   let r2ObjectCount = 0;
@@ -126,6 +145,9 @@ backup.get('/storage-usage', async (c) => {
     d1: {
       table_counts: counts,
       total_rows: totalRows,
+      total_size_bytes: d1SizeBytes,
+      total_size_kb: d1TotalKb,
+      total_size_mb: d1TotalMb,
     },
     r2: {
       object_count: r2ObjectCount,

@@ -140,6 +140,9 @@ export interface StorageUsageResponse {
   d1: {
     table_counts: Record<string, number>;
     total_rows: number;
+    total_size_bytes?: number;
+    total_size_kb?: number;
+    total_size_mb?: number;
   };
   r2: {
     object_count: number;
