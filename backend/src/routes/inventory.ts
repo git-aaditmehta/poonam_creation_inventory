@@ -4,7 +4,7 @@ import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
 import {
   collectErrors, validateRequired, validateString,
-  validatePositiveNumber, validatePositiveInteger, validateUnit,
+  validatePositiveNumber, validateUnit,
   rupeesToPaisa, paisaToRupees,
 } from '../utils/validation';
 
@@ -132,7 +132,7 @@ function createCategoryRoutes(config: CategoryConfig) {
 
     // Check for duplicate item_id
     const existing = await c.env.DB.prepare(
-      `SELECT id FROM ${config.table} WHERE item_id = ? AND is_deleted = 0`
+      `SELECT id FROM ${config.table} WHERE item_id = ?`
     ).bind(body.item_id.trim()).first();
     if (existing) {
       return c.json({ error: `Item with ID "${body.item_id}" already exists` }, 409);
@@ -176,7 +176,7 @@ function createCategoryRoutes(config: CategoryConfig) {
       // Check uniqueness if changing item_id
       if (body.item_id.trim() !== existing.item_id) {
         const dup = await c.env.DB.prepare(
-          `SELECT id FROM ${config.table} WHERE item_id = ? AND is_deleted = 0 AND id != ?`
+          `SELECT id FROM ${config.table} WHERE item_id = ? AND id != ?`
         ).bind(body.item_id.trim(), itemId).first();
         if (dup) return c.json({ error: `Item ID "${body.item_id}" already exists` }, 409);
       }
@@ -219,12 +219,28 @@ function createCategoryRoutes(config: CategoryConfig) {
     return c.json({ success: true });
   });
 
-  // DELETE /:id — soft delete (owner only)
+  // DELETE /:id — hard delete (owner only)
   cat.delete('/:id', authMiddleware, ownerOnly, async (c) => {
     const itemId = c.req.param('id');
+
+    // If category has images (e.g. plated_jewelry), clean up R2 images first
+    if (config.hasImage) {
+      const item = await c.env.DB.prepare(
+        `SELECT image_key, thumb_key FROM ${config.table} WHERE id = ?`
+      ).bind(itemId).first<{ image_key: string | null; thumb_key: string | null }>();
+
+      if (item?.image_key) {
+        try { await c.env.IMAGES.delete(item.image_key); } catch { /* ignore */ }
+      }
+      if (item?.thumb_key) {
+        try { await c.env.IMAGES.delete(item.thumb_key); } catch { /* ignore */ }
+      }
+    }
+
     const result = await c.env.DB.prepare(
-      `UPDATE ${config.table} SET is_deleted = 1, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0`
+      `DELETE FROM ${config.table} WHERE id = ?`
     ).bind(itemId).run();
+
     if (!result.meta.changed_db) {
       return c.json({ error: 'Item not found' }, 404);
     }

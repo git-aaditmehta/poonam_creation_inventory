@@ -28,7 +28,10 @@ class ApiError extends Error {
   }
 }
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
   const defaultHeaders: Record<string, string> = {
     'Accept': 'application/json',
   };
@@ -43,7 +46,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     defaultHeaders['Content-Type'] = 'application/json';
   }
 
-  const response = await fetch(endpoint, {
+  const response = await fetch(url, {
     ...options,
     credentials: 'include',
     headers: {
@@ -258,6 +261,10 @@ export const api = {
         method: 'POST',
         body: formData,
       }),
-    getUrl: (key: string) => `/api/images/${key}`,
+    getUrl: (key?: string | null, timestamp?: string) => {
+      if (!key) return '';
+      const base = `${API_BASE_URL}/api/images/${key}`;
+      return timestamp ? `${base}?t=${encodeURIComponent(timestamp)}` : base;
+    },
   },
 };

@@ -3,7 +3,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
 import {
-  validateString, validatePositiveNumber, validatePositiveInteger,
+  validateString, validatePositiveNumber,
   validateUnit, rupeesToPaisa, collectErrors,
 } from '../utils/validation';
 
@@ -127,7 +127,7 @@ excel.post('/validate-row', async (c) => {
   if (body.item_id && errors.length === 0) {
     const table = body.category;
     const existing = await c.env.DB.prepare(
-      `SELECT id, item_id FROM ${table} WHERE item_id = ? AND is_deleted = 0`
+      `SELECT id, item_id FROM ${table} WHERE item_id = ?`
     ).bind(body.item_id.trim()).first();
     if (existing) {
       errors.push({
@@ -215,7 +215,7 @@ excel.post('/commit-row', async (c) => {
 
   // Check uniqueness
   const existing = await c.env.DB.prepare(
-    `SELECT id FROM ${table} WHERE item_id = ? AND is_deleted = 0`
+    `SELECT id FROM ${table} WHERE item_id = ?`
   ).bind(body.item_id.trim()).first();
   if (existing) {
     return c.json({ error: `Item "${body.item_id}" already exists` }, 409);

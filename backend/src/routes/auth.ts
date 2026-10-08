@@ -48,6 +48,14 @@ auth.post('/login', async (c) => {
     `INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`
   ).bind(sessionId, user.id, tokenHash, expiresAt).run();
 
+  // Opportunistic cleanup of expired or revoked sessions older than 7 days
+  const cleanupPromise = c.env.DB.prepare(
+    `DELETE FROM sessions WHERE expires_at < datetime('now', '-7 days') OR (is_revoked = 1 AND created_at < datetime('now', '-7 days'))`
+  ).run().catch(() => {});
+  if (c.executionCtx?.waitUntil) {
+    c.executionCtx.waitUntil(cleanupPromise);
+  }
+
   const isHttps = c.req.url.startsWith('https://') || c.req.header('x-forwarded-proto') === 'https';
 
   setCookie(c, 'session_token', rawToken, {

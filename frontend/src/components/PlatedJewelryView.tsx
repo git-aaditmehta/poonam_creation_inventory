@@ -289,10 +289,11 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   };
 
   const handleDelete = async (item: PlatedJewelryItem) => {
-    if (!confirm(`Are you sure you want to delete ${item.item_id}?`)) return;
+    const stockMsg = item.quantity > 0 ? ` Note: still has ${item.quantity} ${item.unit} in stock.` : '';
+    if (!confirm(`Are you sure you want to permanently delete ${item.item_id}?${stockMsg}`)) return;
     try {
       await api.inventory.deleteItem('plated-jewelry', item.id);
-      showToast('success', 'Item Removed', `${item.item_id} deleted successfully`);
+      showToast('success', 'Item Deleted', `${item.item_id} permanently removed`);
       setDetailItem(null);
       fetchItems();
       fetchValuation();
@@ -503,7 +504,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
               >
                 {item.thumb_key ? (
                   <img
-                    src={`/api/images/${item.thumb_key}?t=${encodeURIComponent(item.updated_at || '')}`}
+                    src={api.images.getUrl(item.thumb_key, item.updated_at)}
                     alt={item.item_id}
                     style={{
                       width: '100%',
@@ -640,7 +641,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
             <div className="detail-panel-image">
               {detailItem.image_key || detailItem.thumb_key ? (
                 <img
-                  src={`/api/images/${detailItem.image_key || detailItem.thumb_key}?t=${encodeURIComponent(detailItem.updated_at || '')}`}
+                  src={api.images.getUrl(detailItem.image_key || detailItem.thumb_key, detailItem.updated_at)}
                   alt={detailItem.item_id}
                 />
               ) : (
