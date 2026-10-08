@@ -272,7 +272,10 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={item.id}>
+                <tr
+                  key={item.id}
+                  className={item.is_low_stock || item.quantity <= item.low_stock_threshold ? 'row-low-stock' : ''}
+                >
                   <td>
                     <div style={{ fontWeight: 700, fontSize: 14 }} className="mono">
                       {item.item_id}

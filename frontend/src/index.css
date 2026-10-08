@@ -630,6 +630,29 @@ code, kbd, pre, .mono {
   background: var(--teal-faint);
 }
 
+/* Low stock alert row: soft light red with clear, high-contrast contents */
+.data-table tr.row-low-stock td {
+  background-color: #FFF1F2 !important;
+}
+
+.data-table tr.row-low-stock:hover td {
+  background-color: #FFE4E6 !important;
+}
+
+.data-table tr.row-low-stock td:first-child {
+  border-left: 3px solid #E11D48;
+}
+
+/* Low stock card for plated jewelry catalog */
+.card.card-low-stock {
+  background: #FFF5F5 !important;
+  border-color: rgba(225, 29, 72, 0.3) !important;
+}
+
+.card.card-low-stock:hover {
+  border-color: rgba(225, 29, 72, 0.55) !important;
+}
+
 /* ========================= CARDS / GRID ========================= */
 .grid-cards {
   display: grid;

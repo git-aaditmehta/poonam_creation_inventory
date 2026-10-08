@@ -78,7 +78,7 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
               {items.map((item) => {
                 const deficit = item.low_stock_threshold - item.quantity;
                 return (
-                  <tr key={`${item.category}_${item.id}`}>
+                  <tr key={`${item.category}_${item.id}`} className="row-low-stock">
                     <td>
                       <span className="badge badge-gold">{item.category_name}</span>
                     </td>

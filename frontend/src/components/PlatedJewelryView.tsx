@@ -482,7 +482,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
           {items.map((item) => (
             <div
               key={item.id}
-              className="card"
+              className={`card ${item.is_low_stock || item.quantity <= item.low_stock_threshold ? 'card-low-stock' : ''}`}
               style={{ display: 'flex', flexDirection: 'column', cursor: 'pointer' }}
               onClick={() => setDetailItem(item)}
             >
