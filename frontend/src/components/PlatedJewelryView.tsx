@@ -13,11 +13,21 @@ import {
   IndianRupee,
   Package,
   ArrowUpDown,
+  Layers,
 } from 'lucide-react';
 import { api } from '../api';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { processJewelryImage } from '../utils/imageProcessor';
+
+interface QueuedImage {
+  id: string;
+  file: File;
+  name: string;
+  previewUrl: string;
+  status: 'pending' | 'saved' | 'error';
+  savedItemId?: string;
+}
 
 interface PlatedJewelryViewProps {
   user: User;
@@ -50,12 +60,14 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [formCost, setFormCost] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Image upload state — used in both create and standalone upload
+  // Batch image queue for creation
+  const [imageQueue, setImageQueue] = useState<QueuedImage[]>([]);
+  const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
+
+  // Standalone image upload modal (for existing items)
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewThumb, setPreviewThumb] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-
-  // Standalone image upload modal (for existing items)
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
   const fetchItems = useCallback(async () => {
@@ -85,10 +97,90 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   useEffect(() => { fetchItems(); }, [fetchItems]);
   useEffect(() => { fetchValuation(); }, [fetchValuation]);
 
+  const handleFilesSelected = (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    const fileArray = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (fileArray.length === 0) {
+      showToast('error', 'Invalid File', 'Please select valid image files');
+      return;
+    }
+
+    const newItems: QueuedImage[] = fileArray.map((file, i) => ({
+      id: `img_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 7)}`,
+      file,
+      name: file.name,
+      previewUrl: URL.createObjectURL(file),
+      status: 'pending',
+    }));
+
+    setImageQueue((prev) => {
+      const combined = [...prev, ...newItems];
+      return combined;
+    });
+
+    if (imageQueue.length === 0) {
+      setCurrentQueueIndex(0);
+    }
+  };
+
+  const handleRemoveFromQueue = (index: number) => {
+    const itemToRemove = imageQueue[index];
+    if (itemToRemove) {
+      URL.revokeObjectURL(itemToRemove.previewUrl);
+    }
+    const newQueue = imageQueue.filter((_, i) => i !== index);
+    setImageQueue(newQueue);
+    if (currentQueueIndex >= newQueue.length) {
+      setCurrentQueueIndex(Math.max(0, newQueue.length - 1));
+    }
+  };
+
+  const handleSkipNext = () => {
+    const nextUnsaved = imageQueue.findIndex(
+      (item, idx) => idx > currentQueueIndex && item.status !== 'saved'
+    );
+    if (nextUnsaved !== -1) {
+      setCurrentQueueIndex(nextUnsaved);
+    } else {
+      const anyOther = imageQueue.findIndex(
+        (item, idx) => idx !== currentQueueIndex && item.status !== 'saved'
+      );
+      if (anyOther !== -1) {
+        setCurrentQueueIndex(anyOther);
+      }
+    }
+  };
+
+  const resetCreateModal = () => {
+    imageQueue.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+    setImageQueue([]);
+    setCurrentQueueIndex(0);
+    setFormItemId('');
+    setFormQty('');
+    setFormUnit('PC');
+    setFormThreshold('');
+    setFormCost('');
+    const createFileInput = document.getElementById('create-image-input') as HTMLInputElement | null;
+    if (createFileInput) createFileInput.value = '';
+  };
+
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formItemId.trim() || formQty === '' || formThreshold === '' || formCost === '') {
       showToast('error', 'Validation Error', 'All fields are strictly required');
+      return;
+    }
+
+    const currentQueued = imageQueue[currentQueueIndex];
+
+    if (currentQueued && currentQueued.status === 'saved') {
+      const nextUnsaved = imageQueue.findIndex((i) => i.status !== 'saved');
+      if (nextUnsaved !== -1) {
+        setCurrentQueueIndex(nextUnsaved);
+        showToast('info', 'Already Saved', `Photo already saved as ${currentQueued.savedItemId}. Jumped to next.`);
+      } else {
+        showToast('info', 'Queue Complete', 'All queued photos have already been saved!');
+      }
       return;
     }
 
@@ -103,10 +195,10 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         cost_price: Number(formCost),
       });
 
-      // Step 2: If an image was selected, upload it immediately
-      if (selectedFile && result?.id) {
+      // Step 2: If an image was queued, upload it immediately
+      if (currentQueued && result?.id) {
         try {
-          const processed = await processJewelryImage(selectedFile);
+          const processed = await processJewelryImage(currentQueued.file);
           const ext = processed.fullBlob.type === 'image/jpeg' ? 'jpg' : 'webp';
           const formData = new FormData();
           formData.append('item_id', result.id);
@@ -118,11 +210,41 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         }
       }
 
-      showToast('success', 'Item Created', `Added ${formItemId} to Plated Jewelry`);
-      setIsCreateOpen(false);
-      resetForm();
+      const savedId = formItemId.trim();
+      showToast('success', 'Item Created', `Added ${savedId} to Plated Jewelry`);
       fetchItems();
       fetchValuation();
+
+      // Step 3: Advance queue
+      if (imageQueue.length > 0) {
+        const updatedQueue = imageQueue.map((item, idx) => {
+          if (idx === currentQueueIndex) {
+            return { ...item, status: 'saved' as const, savedItemId: savedId };
+          }
+          return item;
+        });
+        setImageQueue(updatedQueue);
+
+        let nextIndex = updatedQueue.findIndex(
+          (item, idx) => idx > currentQueueIndex && item.status !== 'saved'
+        );
+        if (nextIndex === -1) {
+          nextIndex = updatedQueue.findIndex((item) => item.status !== 'saved');
+        }
+
+        if (nextIndex !== -1) {
+          setCurrentQueueIndex(nextIndex);
+          setFormItemId('');
+          setFormQty('');
+        } else {
+          showToast('success', 'Batch Complete', `All ${imageQueue.length} items created successfully!`);
+          setIsCreateOpen(false);
+          resetCreateModal();
+        }
+      } else {
+        setIsCreateOpen(false);
+        resetCreateModal();
+      }
     } catch (err: any) {
       showToast('error', 'Creation Failed', err.message);
     } finally {
@@ -232,20 +354,6 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     setIsUploadOpen(true);
   };
 
-  const resetForm = () => {
-    setFormItemId('');
-    setFormQty('');
-    setFormUnit('PC');
-    setFormThreshold('');
-    setFormCost('');
-    setSelectedFile(null);
-    setPreviewThumb(null);
-    const createFileInput = document.getElementById('create-image-input') as HTMLInputElement | null;
-    if (createFileInput) createFileInput.value = '';
-    const standaloneFileInput = document.getElementById('image-file-input') as HTMLInputElement | null;
-    if (standaloneFileInput) standaloneFileInput.value = '';
-  };
-
   return (
     <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
       {/* Header Row */}
@@ -295,7 +403,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
           {isOwner && (
             <button
               onClick={() => {
-                resetForm();
+                resetCreateModal();
                 setIsCreateOpen(true);
               }}
               className="btn btn-primary"
@@ -660,14 +768,25 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         </div>
       )}
 
-      {/* ==================== CREATE MODAL (combined with image) ==================== */}
+      {/* ==================== CREATE MODAL (with Multi-Image Queue) ==================== */}
       {isCreateOpen && (
         <div className="modal-backdrop">
           <div className="modal-content" style={{ maxWidth: 580 }}>
             <div className="modal-header">
-              <h3 style={{ fontSize: 16, fontWeight: 700 }}>Add Plated Jewelry</h3>
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 700 }}>Add Plated Jewelry</h3>
+                {imageQueue.length > 0 && (
+                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                    Batch Entry • Processing photo {currentQueueIndex + 1} of {imageQueue.length} ({imageQueue.filter((i) => i.status === 'saved').length} saved)
+                  </p>
+                )}
+              </div>
               <button
-                onClick={() => setIsCreateOpen(false)}
+                type="button"
+                onClick={() => {
+                  setIsCreateOpen(false);
+                  resetCreateModal();
+                }}
                 style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
               >
                 <X size={18} />
@@ -675,95 +794,330 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
             </div>
             <form onSubmit={handleCreateSubmit}>
               <div className="modal-body">
-                {/* Image Upload Zone — integrated */}
-                <div style={{ marginBottom: 18 }}>
-                  <label className="form-label" style={{ marginBottom: 8, display: 'block' }}>
-                    Product Image <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span>
-                  </label>
-                  <div
-                    style={{
-                      border: '2px dashed var(--border-medium)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: previewThumb ? '12px' : '28px 16px',
-                      textAlign: 'center',
-                      cursor: 'pointer',
-                      background: 'var(--bg-surface-2)',
-                      transition: 'border-color 0.15s',
-                    }}
-                    onClick={() => document.getElementById('create-image-input')?.click()}
-                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--teal-mid)'; }}
-                    onDragLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-medium)'; }}
-                    onDrop={async (e) => {
-                      e.preventDefault();
-                      e.currentTarget.style.borderColor = 'var(--border-medium)';
-                      const file = e.dataTransfer.files?.[0];
-                      if (file && file.type.startsWith('image/')) {
-                        try {
-                          setSelectedFile(file);
-                          const processed = await processJewelryImage(file);
-                          setPreviewThumb(processed.thumbDataUrl);
-                        } catch (err: any) {
-                          showToast('error', 'Image Processing Failed', err.message);
-                        }
-                      }
-                    }}
-                  >
-                    {previewThumb ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                        <img
-                          src={previewThumb}
-                          alt="Preview"
-                          style={{
-                            width: 80, height: 80,
-                            objectFit: 'contain',
-                            borderRadius: 'var(--radius-sm)',
-                            background: '#fff',
-                            border: '1px solid var(--border-subtle)',
-                          }}
-                        />
-                        <div style={{ textAlign: 'left', flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--emerald-text)' }}>
-                            Image ready
-                          </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                            {selectedFile?.name} — Click to change
-                          </div>
+                {/* Hidden Multi-file input */}
+                <input
+                  id="create-image-input"
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    handleFilesSelected(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+
+                {/* Image Queue Section */}
+                {imageQueue.length > 0 ? (
+                  <div style={{ marginBottom: 18 }}>
+                    {/* Queue Strip Header */}
+                    <div
+                      style={{
+                        background: 'var(--bg-surface-2)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '12px 14px',
+                        marginBottom: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          marginBottom: 10,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Layers size={14} color="var(--teal-primary)" />
+                          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+                            PHOTO QUEUE ({imageQueue.filter((i) => i.status === 'saved').length}/{imageQueue.length} SAVED)
+                          </span>
                         </div>
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedFile(null);
-                            setPreviewThumb(null);
-                          }}
+                          onClick={() => document.getElementById('create-image-input')?.click()}
                           style={{
-                            background: 'none', border: 'none',
-                            color: 'var(--text-muted)', cursor: 'pointer', padding: 4,
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--teal-primary)',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: 0,
                           }}
                         >
-                          <X size={16} />
+                          <Plus size={13} /> Add more photos
                         </button>
                       </div>
-                    ) : (
-                      <>
-                        <Upload size={24} color="var(--text-muted)" style={{ margin: '0 auto 6px' }} />
-                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>
-                          Click or drag to add a photo
+
+                      {/* Queue Carousel: Round box for each photo */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 12,
+                          overflowX: 'auto',
+                          padding: '6px 4px 12px',
+                          alignItems: 'center',
+                        }}
+                      >
+                        {imageQueue.map((item, idx) => {
+                          const isCurrent = idx === currentQueueIndex;
+                          const isSaved = item.status === 'saved';
+
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => setCurrentQueueIndex(idx)}
+                              style={{
+                                position: 'relative',
+                                cursor: 'pointer',
+                                flexShrink: 0,
+                                textAlign: 'center',
+                              }}
+                              title={isSaved ? `Saved as ${item.savedItemId}` : item.name}
+                            >
+                              <div
+                                style={{
+                                  width: 50,
+                                  height: 50,
+                                  borderRadius: '50%',
+                                  overflow: 'hidden',
+                                  border: isCurrent
+                                    ? '3px solid var(--teal-primary)'
+                                    : isSaved
+                                    ? '2px solid var(--emerald-text)'
+                                    : '2px solid var(--border-medium)',
+                                  boxShadow: isCurrent
+                                    ? '0 0 0 4px rgba(13, 148, 136, 0.22), var(--shadow-sm)'
+                                    : 'none',
+                                  transform: isCurrent ? 'scale(1.12)' : 'scale(1)',
+                                  transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+                                  background: '#fff',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                <img
+                                  src={item.previewUrl}
+                                  alt={item.name}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                              </div>
+
+                              {/* Badges on round box */}
+                              {isSaved ? (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: -2,
+                                    right: -2,
+                                    background: 'var(--emerald-text)',
+                                    color: '#fff',
+                                    borderRadius: '50%',
+                                    width: 17,
+                                    height: 17,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 10,
+                                    fontWeight: 800,
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                  }}
+                                >
+                                  ✓
+                                </div>
+                              ) : isCurrent ? (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    bottom: -8,
+                                    left: '50%',
+                                    transform: 'translateX(-50%)',
+                                    background: 'var(--teal-primary)',
+                                    color: '#fff',
+                                    borderRadius: 8,
+                                    padding: '1px 5px',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    letterSpacing: 0.5,
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  CURRENT
+                                </div>
+                              ) : (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: -2,
+                                    left: -2,
+                                    background: 'var(--bg-surface-3)',
+                                    color: 'var(--text-secondary)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: '50%',
+                                    width: 16,
+                                    height: 16,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 9,
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {idx + 1}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Active photo display card */}
+                    {imageQueue[currentQueueIndex] && (
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 14,
+                          padding: '12px 14px',
+                          background: 'var(--bg-surface-1)',
+                          border: '1px solid var(--border-medium)',
+                          borderRadius: 'var(--radius-md)',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 64,
+                            height: 64,
+                            borderRadius: 'var(--radius-sm)',
+                            background: '#fff',
+                            border: '1px solid var(--border-subtle)',
+                            overflow: 'hidden',
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <img
+                            src={imageQueue[currentQueueIndex].previewUrl}
+                            alt="Current preview"
+                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                          />
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                          Auto-compressed to WebP
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>
+                              Photo {currentQueueIndex + 1} of {imageQueue.length}
+                            </span>
+                            {imageQueue[currentQueueIndex].status === 'saved' ? (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  color: 'var(--emerald-text)',
+                                  background: 'var(--emerald-bg)',
+                                  padding: '2px 8px',
+                                  borderRadius: 12,
+                                }}
+                              >
+                                Saved as {imageQueue[currentQueueIndex].savedItemId} ✓
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  color: 'var(--teal-primary)',
+                                  background: 'rgba(13, 148, 136, 0.1)',
+                                  padding: '2px 8px',
+                                  borderRadius: 12,
+                                }}
+                              >
+                                Ready to Catalog
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: 'var(--text-muted)',
+                              marginTop: 3,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {imageQueue[currentQueueIndex].name}
+                          </div>
                         </div>
-                      </>
+                        {imageQueue[currentQueueIndex].status !== 'saved' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFromQueue(currentQueueIndex)}
+                            title="Remove this photo from queue"
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: 6,
+                              borderRadius: 4,
+                            }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </div>
                     )}
-                    <input
-                      id="create-image-input"
-                      type="file"
-                      accept="image/*"
-                      style={{ display: 'none' }}
-                      onChange={handleImageFileChange}
-                    />
                   </div>
-                </div>
+                ) : (
+                  /* Empty state dropzone */
+                  <div style={{ marginBottom: 18 }}>
+                    <div
+                      style={{
+                        border: '2px dashed var(--border-medium)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '28px 16px',
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        background: 'var(--bg-surface-2)',
+                        transition: 'border-color 0.15s',
+                      }}
+                      onClick={() => document.getElementById('create-image-input')?.click()}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.style.borderColor = 'var(--teal-mid)';
+                      }}
+                      onDragLeave={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--border-medium)';
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.style.borderColor = 'var(--border-medium)';
+                        handleFilesSelected(e.dataTransfer.files);
+                      }}
+                    >
+                      <Upload size={28} color="var(--text-muted)" style={{ margin: '0 auto 8px' }} />
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        Click or drag to add photos
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Select <strong>multiple photos at once</strong> to queue them for rapid entry
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        Mobile camera & gallery supported • Auto-compressed to WebP
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Fields */}
                 <div className="form-group">
@@ -851,13 +1205,63 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                   </div>
                 </div>
               </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setIsCreateOpen(false)}>
-                  Cancel
+
+              {/* Modal Footer with queue actions */}
+              <div
+                className="modal-footer"
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 10,
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setIsCreateOpen(false);
+                    resetCreateModal();
+                  }}
+                >
+                  {imageQueue.length > 0 && imageQueue.some((i) => i.status === 'saved') ? 'Done / Close' : 'Cancel'}
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Create Item'}
-                </button>
+
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  {imageQueue.length > 1 && imageQueue.filter((i) => i.status !== 'saved').length > 1 && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleSkipNext}
+                      title="Skip this photo for now and catalog it later"
+                      style={{ fontSize: 13 }}
+                    >
+                      Skip Photo →
+                    </button>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={isSubmitting}
+                    style={{ minWidth: 140 }}
+                  >
+                    {isSubmitting ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : imageQueue.length > 0 ? (
+                      imageQueue[currentQueueIndex]?.status === 'saved' ? (
+                        'Next Unsaved Photo →'
+                      ) : imageQueue.filter((i) => i.status !== 'saved').length > 1 ? (
+                        `Save & Next (${imageQueue.filter((i) => i.status === 'saved').length + 1}/${imageQueue.length}) →`
+                      ) : (
+                        `Save Final Item (${imageQueue.length}/${imageQueue.length})`
+                      )
+                    ) : (
+                      'Create Item'
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
