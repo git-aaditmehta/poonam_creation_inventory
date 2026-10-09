@@ -94,6 +94,22 @@ function createCategoryRoutes(config: CategoryConfig) {
     });
   }
 
+  // GET /export-all — all active items for report/PDF generation (no price, available to owner & staff)
+  cat.get('/export-all', authMiddleware, async (c) => {
+    const items = await c.env.DB.prepare(
+      `SELECT item_id, quantity, unit, low_stock_threshold, updated_at
+       FROM ${config.table}
+       WHERE is_deleted = 0
+       ORDER BY item_id ASC`
+    ).all();
+
+    return c.json({
+      items: items.results || [],
+      count: items.results?.length || 0,
+      generated_at: new Date().toISOString(),
+    });
+  });
+
   // GET /:id — single item
   cat.get('/:id', authMiddleware, async (c) => {
     const session = c.get('session');

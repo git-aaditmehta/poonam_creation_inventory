@@ -19,6 +19,7 @@ import { api } from '../api';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { processJewelryImage } from '../utils/imageProcessor';
+import { GeneratePdfButton } from './GeneratePdfButton';
 
 interface QueuedImage {
   id: string;
@@ -413,6 +414,13 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
               </div>
             </div>
           )}
+
+          <GeneratePdfButton
+            category="plated-jewelry"
+            categoryTitle="Plated Jewelry"
+            username={user.username}
+            showToast={showToast}
+          />
 
           {isOwner && (
             <button

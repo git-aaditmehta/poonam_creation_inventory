@@ -3,7 +3,7 @@ export interface Env {
   IMAGES: R2Bucket;
   OWNER_EMAIL: string;
   OWNER_PASSWORD: string;
-  SESSION_SECRET: string;
+  SESSION_SECRET?: string;
 }
 
 export interface AuthUser {

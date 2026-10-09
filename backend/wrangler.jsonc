@@ -1,19 +1,21 @@
 {
-  "name": "poonam-creation-backend",
-  "main": "src/index.ts",
-  "compatibility_date": "2025-04-01",
-  "compatibility_flags": ["nodejs_compat"],
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "poonam-inventory-db",
-      "database_id": "286f46f5-944d-4782-bd20-f3b063b69830"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "binding": "IMAGES",
-      "bucket_name": "poonam-inventory-images"
-    }
-  ]
+	"name": "poonam-creation-backend",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-04-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "poonam-inventory-db",
+			"database_id": "286f46f5-944d-4782-bd20-f3b063b69830"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "IMAGES",
+			"bucket_name": "poonam-inventory-images"
+		}
+	]
 }

@@ -14,6 +14,7 @@ import {
 import { api } from '../api';
 import type { FoilItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { GeneratePdfButton } from './GeneratePdfButton';
 
 interface FoilViewProps {
   user: User;
@@ -198,6 +199,13 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
               </div>
             </div>
           )}
+
+          <GeneratePdfButton
+            category="foil"
+            categoryTitle="Silver & Metal Foil Stock"
+            username={user.username}
+            showToast={showToast}
+          />
 
           {isOwner && (
             <button

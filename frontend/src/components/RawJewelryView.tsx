@@ -13,6 +13,7 @@ import {
 import { api } from '../api';
 import type { RawJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { GeneratePdfButton } from './GeneratePdfButton';
 
 interface RawJewelryViewProps {
   user: User;
@@ -154,17 +155,25 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
           </p>
         </div>
 
-        {isOwner && (
-          <button
-            onClick={() => {
-              resetForm();
-              setIsCreateOpen(true);
-            }}
-            className="btn btn-primary"
-          >
-            <Plus size={16} /> New Raw Casting
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <GeneratePdfButton
+            category="raw-jewelry"
+            categoryTitle="Raw Jewelry"
+            username={user.username}
+            showToast={showToast}
+          />
+          {isOwner && (
+            <button
+              onClick={() => {
+                resetForm();
+                setIsCreateOpen(true);
+              }}
+              className="btn btn-primary"
+            >
+              <Plus size={16} /> New Raw Casting
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search Toolbar */}

@@ -14,6 +14,7 @@ import {
 import { api } from '../api';
 import type { StoneItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { GeneratePdfButton } from './GeneratePdfButton';
 
 interface StonesViewProps {
   user: User;
@@ -198,6 +199,13 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
               </div>
             </div>
           )}
+
+          <GeneratePdfButton
+            category="stones"
+            categoryTitle="Precious & Synthetic Stones"
+            username={user.username}
+            showToast={showToast}
+          />
 
           {isOwner && (
             <button

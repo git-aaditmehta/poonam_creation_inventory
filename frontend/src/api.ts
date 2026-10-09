@@ -169,6 +169,18 @@ export const api = {
         method: 'DELETE',
       }),
     getLowStock: () => request<{ items: LowStockItem[]; total: number }>('/api/inventory/low-stock'),
+    getExportAll: (category: 'plated-jewelry' | 'raw-jewelry' | 'stones' | 'foil') =>
+      request<{
+        items: {
+          item_id: string;
+          quantity: number;
+          unit: string;
+          low_stock_threshold: number;
+          updated_at: string;
+        }[];
+        count: number;
+        generated_at: string;
+      }>(`/api/inventory/${category}/export-all`),
   },
 
   // Stock Operations
