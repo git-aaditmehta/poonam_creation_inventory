@@ -17,8 +17,12 @@ import {
   UserCheck,
   ChevronLeft,
   ChevronRight,
+  Wifi,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 import type { User } from '../types';
+import type { SyncStatus } from '../lib/syncEngine';
 
 export type ActiveTab =
   | 'plated'
@@ -29,6 +33,7 @@ export type ActiveTab =
   | 'low-stock'
   | 'history'
   | 'excel'
+  | 'sync-queue'
   | 'staff'
   | 'backup';
 
@@ -42,6 +47,7 @@ interface NavigationProps {
   setSidebarCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
   mobileMenuOpen: boolean;
   setMobileMenuOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  syncStatus?: SyncStatus;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -54,6 +60,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   setSidebarCollapsed,
   mobileMenuOpen,
   setMobileMenuOpen,
+  syncStatus,
 }) => {
   const isOwner = user.role === 'owner';
 
@@ -171,6 +178,20 @@ export const Navigation: React.FC<NavigationProps> = ({
               <ArrowUpDown size={18} />
               <span>Stock Operations</span>
             </button>
+            <button
+              className={`nav-item ${activeTab === 'sync-queue' ? 'active' : ''}`}
+              onClick={() => handleTabClick('sync-queue')}
+              title="Sync Queue & Offline Operations"
+              style={{ display: 'flex', justifyContent: sidebarCollapsed ? 'center' : 'space-between' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <RefreshCw size={18} className={syncStatus?.isSyncing ? 'animate-spin' : ''} />
+                <span>Sync Queue</span>
+              </div>
+              {!sidebarCollapsed && (syncStatus?.pendingCount ?? 0) > 0 && (
+                <span style={{ background: 'rgba(245,158,11,0.2)', color: '#F59E0B', padding: '2px 8px', borderRadius: '9999px', fontSize: 11, fontWeight: 600 }}>{syncStatus?.pendingCount}</span>
+              )}
+            </button>
           </div>
 
           {isOwner && (
@@ -229,6 +250,35 @@ export const Navigation: React.FC<NavigationProps> = ({
             </>
           )}
         </div>
+
+        {/* Sync Status Indicator */}
+        {!sidebarCollapsed && syncStatus && (
+          <div style={{
+            margin: '8px 12px', padding: '8px 12px', borderRadius: 8,
+            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: syncStatus.isOnline ? '#10b981' : '#ef4444',
+              boxShadow: syncStatus.isOnline ? '0 0 6px #10b981' : '0 0 6px #ef4444',
+              flexShrink: 0,
+            }} />
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', lineHeight: 1.3 }}>
+              {syncStatus.isOnline ? 'Online' : 'Offline'}
+              {syncStatus.isSyncing && ' • Syncing...'}
+            </div>
+          </div>
+        )}
+        {sidebarCollapsed && syncStatus && (
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '8px 0' }} title={syncStatus.isOnline ? 'Online' : 'Offline'}>
+            <div style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: syncStatus.isOnline ? '#10b981' : '#ef4444',
+              boxShadow: syncStatus.isOnline ? '0 0 6px #10b981' : '0 0 6px #ef4444',
+            }} />
+          </div>
+        )}
 
         {/* User Profile Footer */}
         <div className="sidebar-footer">
@@ -349,6 +399,7 @@ export interface TopHeaderProps {
   sidebarCollapsed: boolean;
   setSidebarCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
   setMobileMenuOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  syncStatus?: SyncStatus;
 }
 
 export const TopHeader: React.FC<TopHeaderProps> = ({
@@ -359,6 +410,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   sidebarCollapsed,
   setSidebarCollapsed,
   setMobileMenuOpen,
+  syncStatus,
 }) => {
   const isOwner = user.role === 'owner';
 
@@ -391,6 +443,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             {activeTab === 'low-stock' && 'Low Stock Center'}
             {activeTab === 'history' && 'Transaction History Audit'}
             {activeTab === 'excel' && 'Excel Import & Staging'}
+            {activeTab === 'sync-queue' && 'Sync Queue & Offline Ops'}
             {activeTab === 'staff' && 'Staff Accounts'}
             {activeTab === 'backup' && 'System Storage & Backup'}
           </span>
@@ -398,6 +451,37 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Online/Offline indicator in header */}
+        {syncStatus && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('sync-queue')}
+            title="Click to view Sync Queue"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '4px 10px', borderRadius: 6,
+              background: syncStatus.isOnline ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+              border: `1px solid ${syncStatus.isOnline ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+              cursor: 'pointer',
+            }}
+          >
+            {syncStatus.isOnline
+              ? <Wifi size={13} style={{ color: '#10b981' }} />
+              : <WifiOff size={13} style={{ color: '#ef4444' }} />
+            }
+            <span style={{ fontSize: 11, fontWeight: 500, color: syncStatus.isOnline ? '#10b981' : '#ef4444' }}>
+              {syncStatus.isOnline ? 'Online' : 'Offline'}
+            </span>
+            {(syncStatus.pendingCount ?? 0) > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+                background: '#f59e0b', color: '#000', marginLeft: 2
+              }}>
+                {syncStatus.pendingCount}
+              </span>
+            )}
+          </button>
+        )}
         {isOwner ? (
           <span className="badge badge-gold">Owner</span>
         ) : (

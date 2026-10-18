@@ -12,6 +12,7 @@ import {
   IndianRupee,
 } from 'lucide-react';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
 import type { StoneItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { GeneratePdfButton } from './GeneratePdfButton';
@@ -48,12 +49,21 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
   const fetchItems = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await api.inventory.listStones({ page, limit: 30, search: search.trim() || undefined });
+      // Read from local SQLite (instant, sub-millisecond)
+      const res = await localDb.getItemsPaginated<StoneItem>('stones', page, 30, search.trim() || undefined);
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      showToast('error', 'Failed to load stones', err.message);
+    } catch {
+      // Fallback to API if local DB not ready
+      try {
+        const res = await api.inventory.listStones({ page, limit: 30, search: search.trim() || undefined });
+        setItems(res.items);
+        setTotal(res.total);
+        setTotalPages(res.totalPages || 1);
+      } catch (err: any) {
+        showToast('error', 'Failed to load stones', err.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -62,10 +72,15 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
   const fetchValuation = useCallback(async () => {
     if (!isOwner) return;
     try {
-      const res = await api.inventory.getValuation('stones');
-      setValuation(res.total_value);
+      // Compute valuation locally (instant)
+      const val = await localDb.getValuation('stones');
+      setValuation(val);
     } catch {
-      // ignore
+      // Fallback to API
+      try {
+        const res = await api.inventory.getValuation('stones');
+        setValuation(res.total_value);
+      } catch { /* ignore */ }
     }
   }, [isOwner]);
 
@@ -76,6 +91,13 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
   useEffect(() => {
     fetchValuation();
   }, [fetchValuation]);
+
+  // Re-fetch when local data changes (from sync)
+  useEffect(() => {
+    const handler = () => { fetchItems(); fetchValuation(); };
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
+  }, [fetchItems, fetchValuation]);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

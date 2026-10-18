@@ -3,6 +3,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
 import { validateRequired, validateStrictPositiveNumber, collectErrors } from '../utils/validation';
+import { logSyncChange } from '../utils/syncLog';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -142,6 +143,21 @@ stock.post('/operate', authMiddleware, async (c) => {
       error: 'Stock operation failed — inventory was modified concurrently. Please retry.',
       current_quantity: quantityBefore,
     }, 409);
+  }
+
+  // Log CDC changes for both the inventory item and the transaction
+  const updatedItem = await c.env.DB.prepare(
+    `SELECT * FROM ${table} WHERE id = ?`
+  ).bind(item.id).first();
+  if (updatedItem) {
+    await logSyncChange(c.env.DB, table, item.id, 'UPDATE', updatedItem as Record<string, unknown>);
+  }
+  // Log the new transaction
+  const txRecord = await c.env.DB.prepare(
+    'SELECT * FROM transactions WHERE id = ?'
+  ).bind(txId).first();
+  if (txRecord) {
+    await logSyncChange(c.env.DB, 'transactions', txId, 'CREATE', txRecord as Record<string, unknown>);
   }
 
   return c.json({

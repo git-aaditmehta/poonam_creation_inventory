@@ -11,6 +11,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
 import type { RawJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { GeneratePdfButton } from './GeneratePdfButton';
@@ -46,12 +47,19 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
   const fetchItems = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await api.inventory.listRaw({ page, limit: 30, search: search.trim() || undefined });
+      const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined);
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      showToast('error', 'Failed to load raw jewelry items', err.message);
+    } catch {
+      try {
+        const res = await api.inventory.listRaw({ page, limit: 30, search: search.trim() || undefined });
+        setItems(res.items);
+        setTotal(res.total);
+        setTotalPages(res.totalPages || 1);
+      } catch (err: any) {
+        showToast('error', 'Failed to load raw jewelry items', err.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -59,6 +67,12 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
 
   useEffect(() => {
     fetchItems();
+  }, [fetchItems]);
+
+  useEffect(() => {
+    const handler = () => fetchItems();
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
   }, [fetchItems]);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {

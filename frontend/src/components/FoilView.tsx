@@ -12,6 +12,7 @@ import {
   IndianRupee,
 } from 'lucide-react';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
 import type { FoilItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { GeneratePdfButton } from './GeneratePdfButton';
@@ -48,12 +49,19 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   const fetchItems = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await api.inventory.listFoil({ page, limit: 30, search: search.trim() || undefined });
+      const res = await localDb.getItemsPaginated<FoilItem>('foil', page, 30, search.trim() || undefined);
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      showToast('error', 'Failed to load foil items', err.message);
+    } catch {
+      try {
+        const res = await api.inventory.listFoil({ page, limit: 30, search: search.trim() || undefined });
+        setItems(res.items);
+        setTotal(res.total);
+        setTotalPages(res.totalPages || 1);
+      } catch (err: any) {
+        showToast('error', 'Failed to load foil items', err.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -62,10 +70,13 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   const fetchValuation = useCallback(async () => {
     if (!isOwner) return;
     try {
-      const res = await api.inventory.getValuation('foil');
-      setValuation(res.total_value);
+      const val = await localDb.getValuation('foil');
+      setValuation(val);
     } catch {
-      // ignore
+      try {
+        const res = await api.inventory.getValuation('foil');
+        setValuation(res.total_value);
+      } catch { /* ignore */ }
     }
   }, [isOwner]);
 
@@ -76,6 +87,12 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   useEffect(() => {
     fetchValuation();
   }, [fetchValuation]);
+
+  useEffect(() => {
+    const handler = () => { fetchItems(); fetchValuation(); };
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
+  }, [fetchItems, fetchValuation]);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

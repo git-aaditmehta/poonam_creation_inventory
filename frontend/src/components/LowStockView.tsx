@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, ArrowRight, Loader2, CheckCircle2 } from 'lucide-react';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
 import type { LowStockItem, InventoryCategory } from '../types';
 import { useToast } from '../context/ToastContext';
 
@@ -13,19 +14,31 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
   const [items, setItems] = useState<LowStockItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchLowStock = async () => {
+  const fetchLowStock = useCallback(async () => {
+    try {
+      const lowStockItems = await localDb.getLowStockItems();
+      setItems(lowStockItems as LowStockItem[]);
+    } catch {
       try {
         const res = await api.inventory.getLowStock();
         setItems(res.items);
       } catch (err: any) {
         showToast('error', 'Failed to fetch low stock alerts', err.message);
-      } finally {
-        setIsLoading(false);
       }
-    };
-    fetchLowStock();
+    } finally {
+      setIsLoading(false);
+    }
   }, [showToast]);
+
+  useEffect(() => {
+    fetchLowStock();
+  }, [fetchLowStock]);
+
+  useEffect(() => {
+    const handler = () => fetchLowStock();
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
+  }, [fetchLowStock]);
 
   return (
     <div className="view-container">

@@ -92,6 +92,7 @@ cookies*.txt
 skills-lock.json
 
 final_inventory_management_prd.md
+OFFLINE_FIRST_ARCHITECTURE_PLAYBOOK.md
 
 venv/
 graphify-out/

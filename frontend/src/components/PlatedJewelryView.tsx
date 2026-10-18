@@ -16,6 +16,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { processJewelryImage } from '../utils/imageProcessor';
@@ -74,12 +75,20 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const fetchItems = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await api.inventory.listPlated({ page, limit: 30, search: search.trim() || undefined });
+      // Read from local SQLite (instant)
+      const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined);
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      showToast('error', 'Failed to load items', err.message);
+    } catch {
+      try {
+        const res = await api.inventory.listPlated({ page, limit: 30, search: search.trim() || undefined });
+        setItems(res.items);
+        setTotal(res.total);
+        setTotalPages(res.totalPages || 1);
+      } catch (err: any) {
+        showToast('error', 'Failed to load items', err.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -88,15 +97,25 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const fetchValuation = useCallback(async () => {
     if (!isOwner) return;
     try {
-      const res = await api.inventory.getValuation('plated-jewelry');
-      setValuation(res.total_value);
+      const val = await localDb.getValuation('plated_jewelry');
+      setValuation(val);
     } catch {
-      // ignore
+      try {
+        const res = await api.inventory.getValuation('plated-jewelry');
+        setValuation(res.total_value);
+      } catch { /* ignore */ }
     }
   }, [isOwner]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
   useEffect(() => { fetchValuation(); }, [fetchValuation]);
+
+  // Re-fetch when local data changes (from sync)
+  useEffect(() => {
+    const handler = () => { fetchItems(); fetchValuation(); };
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
+  }, [fetchItems, fetchValuation]);
 
   const handleFilesSelected = (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from './api';
 import type { User, InventoryCategory, BaseInventoryItem } from './types';
 import { ToastProvider, useToast } from './context/ToastContext';
+import { localDb } from './lib/localDb';
+import { syncEngine, type SyncStatus } from './lib/syncEngine';
 import { LoginView } from './components/LoginView';
 import { Navigation, TopHeader, type ActiveTab } from './components/Navigation';
 import { PlatedJewelryView } from './components/PlatedJewelryView';
@@ -14,6 +16,7 @@ import { TransactionHistoryView } from './components/TransactionHistoryView';
 import { ExcelImportView } from './components/ExcelImportView';
 import { StaffManagementView } from './components/StaffManagementView';
 import { BackupView } from './components/BackupView';
+import { SyncQueueView } from './components/SyncQueueView';
 import { Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -26,6 +29,7 @@ const AppContent: React.FC = () => {
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [lowStockCount, setLowStockCount] = useState(0);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(syncEngine.status);
 
   const handleSetSidebarCollapsed = (collapsed: boolean | ((prev: boolean) => boolean)) => {
     setSidebarCollapsed((prev) => {
@@ -38,6 +42,11 @@ const AppContent: React.FC = () => {
   // Quick action prefill state for Stock Operations
   const [opCategory, setOpCategory] = useState<InventoryCategory>('plated_jewelry');
   const [opItem, setOpItem] = useState<BaseInventoryItem | null>(null);
+
+  // Initialize localDb worker on app start (once)
+  useEffect(() => {
+    localDb.init();
+  }, []);
 
   // Verify auth session on initial load
   const checkSession = useCallback(async () => {
@@ -61,24 +70,56 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('auth-unauthorized', handleUnauthorized);
   }, [checkSession]);
 
-  // Fetch low stock alert count for Owner
+  // Start sync engine when user is logged in, stop on logout
+  useEffect(() => {
+    if (!currentUser) {
+      syncEngine.stop();
+      return;
+    }
+
+    // Wait for localDb to be ready, then start sync
+    localDb.ready.then(() => {
+      syncEngine.start();
+    }).catch((err) => {
+      console.error('[App] Failed to start sync engine:', err);
+    });
+
+    const unsub = syncEngine.subscribe(setSyncStatus);
+    return () => {
+      unsub();
+    };
+  }, [currentUser]);
+
+  // Update low stock count from local DB when data changes
   const updateLowStockCount = useCallback(async () => {
     if (!currentUser || currentUser.role !== 'owner') return;
     try {
-      const res = await api.inventory.getLowStock();
-      setLowStockCount(res.total);
+      // Try reading from local DB first (instant)
+      await localDb.ready;
+      const lowStockItems = await localDb.getLowStockItems();
+      setLowStockCount(lowStockItems.length);
     } catch {
-      // ignore
+      // Fallback to API
+      try {
+        const res = await api.inventory.getLowStock();
+        setLowStockCount(res.total);
+      } catch { /* ignore */ }
     }
   }, [currentUser]);
 
   useEffect(() => {
     updateLowStockCount();
+
+    // Re-check when local data changes (sync complete)
+    const handler = () => updateLowStockCount();
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
   }, [updateLowStockCount]);
 
   const handleLogout = async () => {
     try {
       await api.auth.logout();
+      syncEngine.stop();
       setCurrentUser(null);
       showToast('info', 'Logged Out', 'You have been signed out.');
     } catch (err: any) {
@@ -129,6 +170,7 @@ const AppContent: React.FC = () => {
         setSidebarCollapsed={handleSetSidebarCollapsed}
         mobileMenuOpen={mobileMenuOpen}
         setMobileMenuOpen={setMobileMenuOpen}
+        syncStatus={syncStatus}
       />
 
       <div className={`main-area ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -140,6 +182,7 @@ const AppContent: React.FC = () => {
           sidebarCollapsed={sidebarCollapsed}
           setSidebarCollapsed={handleSetSidebarCollapsed}
           setMobileMenuOpen={setMobileMenuOpen}
+          syncStatus={syncStatus}
         />
 
         <main className="main-content">
@@ -185,6 +228,9 @@ const AppContent: React.FC = () => {
         )}
         {activeTab === 'excel' && currentUser.role === 'owner' && (
           <ExcelImportView />
+        )}
+        {activeTab === 'sync-queue' && (
+          <SyncQueueView />
         )}
         {activeTab === 'staff' && currentUser.role === 'owner' && (
           <StaffManagementView />

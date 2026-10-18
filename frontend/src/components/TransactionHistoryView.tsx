@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
 import type { Transaction } from '../types';
 import { useToast } from '../context/ToastContext';
 
@@ -37,20 +38,67 @@ export const TransactionHistoryView: React.FC = () => {
   const fetchHistory = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await api.history.list({
-        page,
-        limit: 50,
-        category: category || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-        item_search: itemSearch.trim() || undefined,
-      });
-      setTransactions(res.transactions);
-      setTotals(res.totals);
-      setTotal(res.total);
-      setTotalPages(res.totalPages || 1);
-    } catch (err: any) {
-      showToast('error', 'Failed to fetch history', err.message);
+      // Try local DB first for instant results
+      let where = 'WHERE 1=1';
+      const params: any[] = [];
+
+      if (category) {
+        where += ' AND category = ?';
+        params.push(category);
+      }
+      if (dateFrom) {
+        where += ' AND created_at >= ?';
+        params.push(dateFrom);
+      }
+      if (dateTo) {
+        where += ' AND created_at <= ?';
+        params.push(dateTo + 'T23:59:59');
+      }
+      if (itemSearch.trim()) {
+        where += ' AND (item_display_id LIKE ? OR item_id LIKE ?)';
+        params.push(`%${itemSearch.trim()}%`, `%${itemSearch.trim()}%`);
+      }
+
+      const countRow = await localDb.get<{ total: number }>(
+        `SELECT COUNT(*) as total FROM transactions ${where}`, params
+      );
+      const totalCount = countRow?.total ?? 0;
+      const offset = (page - 1) * 50;
+      const rows = await localDb.query<Transaction>(
+        `SELECT * FROM transactions ${where} ORDER BY created_at DESC LIMIT 50 OFFSET ?`,
+        [...params, offset]
+      );
+
+      // Compute aggregates
+      const aggRow = await localDb.get<{ total_added: number; total_subtracted: number }>(
+        `SELECT
+          COALESCE(SUM(CASE WHEN operation = 'add' THEN quantity_change ELSE 0 END), 0) as total_added,
+          COALESCE(SUM(CASE WHEN operation = 'subtract' THEN quantity_change ELSE 0 END), 0) as total_subtracted
+        FROM transactions ${where}`,
+        params
+      );
+
+      setTransactions(rows);
+      setTotals({ total_added: aggRow?.total_added ?? 0, total_subtracted: aggRow?.total_subtracted ?? 0 });
+      setTotal(totalCount);
+      setTotalPages(Math.ceil(totalCount / 50) || 1);
+    } catch {
+      // Fallback to API
+      try {
+        const res = await api.history.list({
+          page, limit: 50,
+          category: category || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined,
+          item_search: itemSearch.trim() || undefined,
+        });
+        setTransactions(res.transactions);
+        setTotals(res.totals);
+        setTotal(res.total);
+        setTotalPages(res.totalPages || 1);
+      } catch (err: any) {
+        showToast('error', 'Failed to fetch history', err.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -58,6 +106,12 @@ export const TransactionHistoryView: React.FC = () => {
 
   useEffect(() => {
     fetchHistory();
+  }, [fetchHistory]);
+
+  useEffect(() => {
+    const handler = () => fetchHistory();
+    window.addEventListener('localdb-change', handler);
+    return () => window.removeEventListener('localdb-change', handler);
   }, [fetchHistory]);
 
   const handleExportExcel = () => {

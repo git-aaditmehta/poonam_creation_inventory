@@ -7,6 +7,7 @@ import {
   validatePositiveNumber, validateUnit,
   rupeesToPaisa, paisaToRupees,
 } from '../utils/validation';
+import { logSyncChange } from '../utils/syncLog';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -170,12 +171,21 @@ function createCategoryRoutes(config: CategoryConfig) {
       ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold).run();
     }
 
+    // Fetch the created item and log CDC change
+    const createdRow = await c.env.DB.prepare(
+      `SELECT * FROM ${config.table} WHERE id = ?`
+    ).bind(id).first();
+    if (createdRow) {
+      await logSyncChange(c.env.DB, config.table, id, 'CREATE', createdRow as Record<string, unknown>);
+    }
+
     return c.json({ success: true, id, item_id: body.item_id.trim() }, 201);
   });
 
   // PUT /:id — update master data (owner only). Does NOT change quantity (use stock ops).
   cat.put('/:id', authMiddleware, ownerOnly, async (c) => {
     const itemId = c.req.param('id');
+    if (!itemId) return c.json({ error: 'Missing item ID' }, 400);
     const body = await c.req.json();
 
     const existing = await c.env.DB.prepare(
@@ -232,12 +242,21 @@ function createCategoryRoutes(config: CategoryConfig) {
       `UPDATE ${config.table} SET ${updates.join(', ')} WHERE id = ?`
     ).bind(...params).run();
 
+    // Fetch updated item and log CDC change
+    const updatedRow = await c.env.DB.prepare(
+      `SELECT * FROM ${config.table} WHERE id = ?`
+    ).bind(itemId).first();
+    if (updatedRow) {
+      await logSyncChange(c.env.DB, config.table, itemId, 'UPDATE', updatedRow as Record<string, unknown>);
+    }
+
     return c.json({ success: true });
   });
 
   // DELETE /:id — hard delete (owner only)
   cat.delete('/:id', authMiddleware, ownerOnly, async (c) => {
     const itemId = c.req.param('id');
+    if (!itemId) return c.json({ error: 'Missing item ID' }, 400);
 
     // If category has images (e.g. plated_jewelry), clean up R2 images first
     if (config.hasImage) {
@@ -260,6 +279,10 @@ function createCategoryRoutes(config: CategoryConfig) {
     if (!result.meta.changed_db) {
       return c.json({ error: 'Item not found' }, 404);
     }
+
+    // Log CDC deletion
+    await logSyncChange(c.env.DB, config.table, itemId, 'DELETE', { id: itemId });
+
     return c.json({ success: true });
   });
 

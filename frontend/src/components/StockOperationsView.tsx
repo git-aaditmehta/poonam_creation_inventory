@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   PlusCircle,
   MinusCircle,
@@ -9,8 +9,11 @@ import {
   Layers,
   Gem,
   Scroll,
+  Clock,
 } from 'lucide-react';
 import { api } from '../api';
+import { localDb } from '../lib/localDb';
+import { enqueuePendingOp, getAllPendingOps, type PendingOp } from '../lib/pendingOps';
 import type { InventoryCategory, BaseInventoryItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
 
@@ -22,6 +25,7 @@ interface StockOperationsViewProps {
 }
 
 export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
+  user,
   initialCategory = 'plated_jewelry',
   initialItem = null,
   onOperationSuccess,
@@ -39,7 +43,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<any | null>(null);
 
-  // Search items as user types
+  // Search items as user types — from local DB (instant) with API fallback
   useEffect(() => {
     if (!searchTerm.trim() || (selectedItem && selectedItem.item_id === searchTerm)) {
       setSearchResults([]);
@@ -49,22 +53,62 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
-        let res: any;
-        if (category === 'plated_jewelry') res = await api.inventory.listPlated({ search: searchTerm.trim(), limit: 10 });
-        else if (category === 'raw_jewelry') res = await api.inventory.listRaw({ search: searchTerm.trim(), limit: 10 });
-        else if (category === 'stones') res = await api.inventory.listStones({ search: searchTerm.trim(), limit: 10 });
-        else res = await api.inventory.listFoil({ search: searchTerm.trim(), limit: 10 });
-
-        setSearchResults(res.items || []);
+        // Local DB search first (sub-millisecond)
+        const table = category === 'plated_jewelry' ? 'plated_jewelry'
+          : category === 'raw_jewelry' ? 'raw_jewelry'
+          : category === 'stones' ? 'stones' : 'foil';
+        const items = await localDb.query<BaseInventoryItem>(
+          `SELECT * FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ? ORDER BY item_id ASC LIMIT 10`,
+          [`%${searchTerm.trim()}%`]
+        );
+        setSearchResults(items);
       } catch {
-        setSearchResults([]);
+        // Fallback to API
+        try {
+          let res: any;
+          if (category === 'plated_jewelry') res = await api.inventory.listPlated({ search: searchTerm.trim(), limit: 10 });
+          else if (category === 'raw_jewelry') res = await api.inventory.listRaw({ search: searchTerm.trim(), limit: 10 });
+          else if (category === 'stones') res = await api.inventory.listStones({ search: searchTerm.trim(), limit: 10 });
+          else res = await api.inventory.listFoil({ search: searchTerm.trim(), limit: 10 });
+          setSearchResults(res.items || []);
+        } catch {
+          setSearchResults([]);
+        }
       } finally {
         setIsSearching(false);
       }
-    }, 250);
+    }, 150);
 
     return () => clearTimeout(timer);
   }, [searchTerm, category, selectedItem]);
+
+  // Keep state synchronized if initialCategory or initialItem changes from external actions
+  useEffect(() => {
+    if (initialCategory) setCategory(initialCategory);
+    if (initialItem) {
+      setSelectedItem(initialItem);
+      setSearchTerm(initialItem.item_id);
+    }
+  }, [initialCategory, initialItem]);
+
+  // Track pending offline operations for real-time visibility in this view
+  const [pendingOps, setPendingOps] = useState<PendingOp[]>([]);
+
+  const loadPendingOps = useCallback(async () => {
+    try {
+      const ops = await getAllPendingOps();
+      setPendingOps(ops.filter(o => o.status === 'PENDING' || o.status === 'SYNCING'));
+    } catch {
+      setPendingOps([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPendingOps();
+    const handler = () => loadPendingOps();
+    window.addEventListener('pending-ops-changed', handler);
+    return () => window.removeEventListener('pending-ops-changed', handler);
+  }, [loadPendingOps]);
 
   const handleCategoryChange = (newCat: InventoryCategory) => {
     setCategory(newCat);
@@ -102,21 +146,127 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
     }
 
     setIsSubmitting(true);
-    // Generate crypto idempotency key
+    // Generate crypto idempotency key & IDs
     const idempotencyKey = `op_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const changeQty = Number(quantity);
+    const newBalance = operation === 'add' ? currentQty + changeQty : currentQty - changeQty;
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+    const nowIso = new Date().toISOString();
+    const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    // Reusable offline executor: records mutation locally & queues for cloud background sync
+    const executeOffline = async () => {
+      // 1. Enqueue to pending_ops table
+      await enqueuePendingOp({
+        idempotency_key: idempotencyKey,
+        entity_type: category,
+        operation: operation === 'add' ? 'Add Stock' : 'Subtract Stock',
+        endpoint: '/api/stock/operate',
+        method: 'POST',
+        payload: JSON.stringify({
+          category,
+          item_id: selectedItem.id,
+          operation,
+          quantity: changeQty,
+          idempotency_key: idempotencyKey,
+          display_item_id: selectedItem.item_id,
+          unit: selectedItem.unit,
+        }),
+      });
+
+      // 2. Optimistic local update in SQLite
+      try {
+        await localDb.exec(
+          `UPDATE ${category} SET quantity = ?, updated_at = ? WHERE id = ?`,
+          [newBalance, nowIso, selectedItem.id]
+        );
+        await localDb.exec(
+          `INSERT INTO transactions
+            (id, category, item_id, item_display_id, operation, quantity_before,
+             quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            txId, category, selectedItem.id, selectedItem.item_id, operation,
+            currentQty, changeQty, newBalance, selectedItem.unit,
+            user?.id || 'offline_user', user?.username || 'You (Offline)', idempotencyKey, nowIso
+          ]
+        );
+        window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: category } }));
+      } catch (dbErr) {
+        console.error('[StockOperations] Local DB update error:', dbErr);
+      }
+
+      showToast(
+        'success',
+        `${operation === 'add' ? 'Added' : 'Subtracted'} ${changeQty} ${selectedItem.unit} (Offline Queued)`,
+        `New Balance: ${newBalance} ${selectedItem.unit} • Queued in Sync Queue`
+      );
+
+      setLastReceipt({
+        success: true,
+        transaction_id: txId,
+        item_id: selectedItem.item_id,
+        category,
+        operation,
+        quantity_before: currentQty,
+        quantity_change: changeQty,
+        new_balance: newBalance,
+        unit: selectedItem.unit,
+        performed_by: user?.username || 'You (Offline)',
+        offline: true,
+      });
+
+      setSelectedItem({
+        ...selectedItem,
+        quantity: newBalance,
+      });
+      setQuantity('');
+
+      if (onOperationSuccess) {
+        onOperationSuccess();
+      }
+    };
+
+    if (isOffline) {
+      await executeOffline();
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
       const res = await api.stock.operate({
         category,
         item_id: selectedItem.id,
         operation,
-        quantity: Number(quantity),
+        quantity: changeQty,
         idempotency_key: idempotencyKey,
       });
 
+      // Synchronously update local SQLite so local reads stay in sync immediately
+      try {
+        await localDb.exec(
+          `UPDATE ${category} SET quantity = ?, updated_at = ? WHERE id = ?`,
+          [res.new_balance, nowIso, selectedItem.id]
+        );
+        await localDb.exec(
+          `INSERT INTO transactions
+            (id, category, item_id, item_display_id, operation, quantity_before,
+             quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            res.transaction_id || txId, category, selectedItem.id, selectedItem.item_id, operation,
+            res.previous_balance ?? currentQty, res.quantity_change ?? changeQty, res.new_balance, res.unit ?? selectedItem.unit,
+            user?.id || '', user?.username || 'Staff', idempotencyKey, nowIso
+          ]
+        );
+        window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: category } }));
+      } catch (dbErr) {
+        console.error('[StockOperations] Local DB sync error:', dbErr);
+      }
+
       showToast(
         'success',
-        `${operation === 'add' ? 'Added' : 'Subtracted'} ${quantity} ${selectedItem.unit}`,
+        `${operation === 'add' ? 'Added' : 'Subtracted'} ${changeQty} ${selectedItem.unit}`,
         `New Balance: ${res.new_balance} ${res.unit}`
       );
 
@@ -124,6 +274,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         ...res,
         item_id: selectedItem.item_id,
         category,
+        performed_by: user?.username || 'Staff',
       });
 
       // Update local item balance
@@ -137,7 +288,20 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         onOperationSuccess();
       }
     } catch (err: any) {
-      showToast('error', 'Stock Operation Failed', err.message);
+      const isNetworkErr =
+        !navigator.onLine ||
+        err.message === 'Failed to fetch' ||
+        err.message === 'Load failed' ||
+        err.message?.toLowerCase().includes('network') ||
+        err.message?.toLowerCase().includes('fetch') ||
+        err.status === 0;
+
+      if (isNetworkErr) {
+        // Network failed during request — fall back to offline queue!
+        await executeOffline();
+      } else {
+        showToast('error', 'Stock Operation Failed', err.message);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -441,23 +605,105 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
             style={{
               marginTop: 24,
               padding: '16px 20px',
-              background: 'var(--emerald-bg)',
-              border: '1px solid var(--emerald-border)',
+              background: lastReceipt.offline ? 'rgba(245, 158, 11, 0.1)' : 'var(--emerald-bg)',
+              border: `1px solid ${lastReceipt.offline ? 'rgba(245, 158, 11, 0.3)' : 'var(--emerald-border)'}`,
               borderRadius: 'var(--radius-md)',
               animation: 'fadeIn 200ms ease-out',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <CheckCircle2 size={18} color="var(--emerald-text)" />
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--emerald-text)' }}>
-                Transaction Verified & Logged
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {lastReceipt.offline ? (
+                  <Clock size={18} color="#f59e0b" />
+                ) : (
+                  <CheckCircle2 size={18} color="var(--emerald-text)" />
+                )}
+                <div style={{ fontSize: 14, fontWeight: 700, color: lastReceipt.offline ? '#f59e0b' : 'var(--emerald-text)' }}>
+                  {lastReceipt.offline ? 'Transaction Queued Offline' : 'Transaction Verified & Logged'}
+                </div>
               </div>
+              {lastReceipt.offline && (
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 9999,
+                  background: 'rgba(245, 158, 11, 0.2)', color: '#f59e0b', fontWeight: 600
+                }}>
+                  Sync Pending
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Item <strong>{lastReceipt.item_id}</strong> updated by <strong>{lastReceipt.performed_by}</strong>.
+              Item <strong>{lastReceipt.item_id}</strong> updated by <strong>{lastReceipt.performed_by || user?.username || 'You'}</strong>.
+              {lastReceipt.offline && ' Will auto-sync to cloud when online.'}
             </div>
             <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4, color: 'var(--text-primary)' }} className="mono">
-              Balance: {lastReceipt.previous_balance} → {lastReceipt.new_balance} {lastReceipt.unit}
+              Balance: {lastReceipt.quantity_before ?? lastReceipt.previous_balance} → {lastReceipt.new_balance} {lastReceipt.unit}
+            </div>
+          </div>
+        )}
+
+        {/* Offline Operations Waiting for Sync Card */}
+        {pendingOps.length > 0 && (
+          <div
+            style={{
+              marginTop: 24,
+              padding: '16px 20px',
+              background: 'rgba(245, 158, 11, 0.06)',
+              border: '1px solid rgba(245, 158, 11, 0.22)',
+              borderRadius: 'var(--radius-md)',
+              animation: 'fadeIn 200ms ease-out',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Clock size={16} color="#f59e0b" />
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#f59e0b' }}>
+                  Offline Operations Queue ({pendingOps.length})
+                </span>
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                Syncs automatically on reconnect
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {pendingOps.map((op) => {
+                let detail = '';
+                try {
+                  const p = typeof op.payload === 'string' ? JSON.parse(op.payload) : op.payload;
+                  if (p.operation && p.quantity && p.display_item_id) {
+                    detail = `${p.operation === 'add' ? '+' : '-'}${p.quantity} ${p.unit || ''} • Item ${p.display_item_id}`;
+                  }
+                } catch { /* ignore */ }
+                return (
+                  <div
+                    key={op.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 12px',
+                      background: 'var(--bg-surface-2)',
+                      borderRadius: 6,
+                      fontSize: 12,
+                      border: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{op.operation}</span>
+                      <span style={{
+                        fontSize: 10, padding: '1px 5px', borderRadius: 4,
+                        background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-secondary)',
+                        textTransform: 'capitalize'
+                      }}>
+                        {op.entity_type.replace(/_/g, ' ')}
+                      </span>
+                      {detail && <span style={{ color: 'var(--gold-primary)', fontWeight: 500 }} className="mono">({detail})</span>}
+                    </div>
+                    <span style={{ color: op.status === 'SYNCING' ? 'var(--teal-deep)' : '#f59e0b', fontSize: 11, fontWeight: 600 }}>
+                      {op.status === 'SYNCING' ? 'Syncing...' : 'Pending'}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
