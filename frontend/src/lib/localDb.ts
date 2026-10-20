@@ -128,20 +128,32 @@ class LocalSqlite {
 
   // ── Convenience Methods ──────────────────────────────────────
 
+  private normalizeItem<T>(item: any): T {
+    if (!item || typeof item !== 'object') return item;
+    return {
+      ...item,
+      is_low_stock: Boolean(item.is_low_stock || (item.low_stock_threshold !== undefined && item.quantity <= item.low_stock_threshold)),
+      is_deleted: Boolean(item.is_deleted),
+    } as T;
+  }
+
   /** Get all active items from an inventory table. */
   async getAllItems<T>(table: string, search?: string): Promise<T[]> {
     const validTables = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil'];
     if (!validTables.includes(table)) throw new Error(`Invalid table: ${table}`);
 
+    let rows: any[];
     if (search && search.trim()) {
-      return this.query<T>(
+      rows = await this.query<T>(
         `SELECT * FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ? ORDER BY item_id ASC`,
         [`%${search.trim()}%`]
       );
+    } else {
+      rows = await this.query<T>(
+        `SELECT * FROM ${table} WHERE is_deleted = 0 ORDER BY item_id ASC`
+      );
     }
-    return this.query<T>(
-      `SELECT * FROM ${table} WHERE is_deleted = 0 ORDER BY item_id ASC`
-    );
+    return rows.map((r) => this.normalizeItem<T>(r));
   }
 
   /** Get paginated items from an inventory table. */
@@ -157,14 +169,14 @@ class LocalSqlite {
     const offset = (page - 1) * limit;
 
     let countRow: any;
-    let items: T[];
+    let rows: any[];
 
     if (search && search.trim()) {
       countRow = await this.get(
         `SELECT COUNT(*) as total FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ?`,
         [`%${search.trim()}%`]
       );
-      items = await this.query<T>(
+      rows = await this.query<T>(
         `SELECT * FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ? ORDER BY item_id ASC LIMIT ? OFFSET ?`,
         [`%${search.trim()}%`, limit, offset]
       );
@@ -172,12 +184,13 @@ class LocalSqlite {
       countRow = await this.get(
         `SELECT COUNT(*) as total FROM ${table} WHERE is_deleted = 0`
       );
-      items = await this.query<T>(
+      rows = await this.query<T>(
         `SELECT * FROM ${table} WHERE is_deleted = 0 ORDER BY item_id ASC LIMIT ? OFFSET ?`,
         [limit, offset]
       );
     }
 
+    const items = rows.map((r) => this.normalizeItem<T>(r));
     const total = countRow?.total ?? 0;
     return {
       items,

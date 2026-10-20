@@ -549,7 +549,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                 )}
 
                 {/* Low stock badge */}
-                {item.is_low_stock && (
+                {Boolean(item.is_low_stock || item.quantity <= item.low_stock_threshold) ? (
                   <span
                     className="badge badge-amber"
                     style={{
@@ -559,7 +559,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                   >
                     <AlertTriangle size={10} /> Low
                   </span>
-                )}
+                ) : null}
               </div>
 
               {/* Info Row */}
