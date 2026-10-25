@@ -96,3 +96,7 @@ OFFLINE_FIRST_ARCHITECTURE_PLAYBOOK.md
 
 venv/
 graphify-out/
+
+# Hyperframes / Brag launch videos
+brag-output/
+brag-output*/
