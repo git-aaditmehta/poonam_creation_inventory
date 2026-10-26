@@ -10,6 +10,7 @@ import {
   X,
   Gem,
   IndianRupee,
+  RefreshCw,
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
@@ -46,40 +47,62 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
   const [formCost, setFormCost] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (forceCloud = false) => {
     setIsLoading(true);
     try {
-      // Read from local SQLite (instant, sub-millisecond)
-      const res = await localDb.getItemsPaginated<StoneItem>('stones', page, 30, search.trim() || undefined);
-      setItems(res.items);
-      setTotal(res.total);
-      setTotalPages(res.totalPages || 1);
-    } catch {
-      // Fallback to API if local DB not ready
+      if (!forceCloud) {
+        // Read from local SQLite (instant, sub-millisecond)
+        const res = await localDb.getItemsPaginated<StoneItem>('stones', page, 30, search.trim() || undefined);
+        if (res.total > 0 || !navigator.onLine) {
+          setItems(res.items);
+          setTotal(res.total);
+          setTotalPages(res.totalPages || 1);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Fallback to cloud API if local DB returned 0 items or forceCloud requested
+      const apiRes = await api.inventory.listStones({ page, limit: 30, search: search.trim() || undefined });
+      setItems(apiRes.items);
+      setTotal(apiRes.total);
+      setTotalPages(apiRes.totalPages || 1);
+
+      // Cache cloud items in local SQLite
+      if (apiRes.items.length > 0) {
+        await localDb.bulkUpsert('stones', apiRes.items);
+      }
+    } catch (err: any) {
+      // Fallback to local DB if cloud API fails
       try {
-        const res = await api.inventory.listStones({ page, limit: 30, search: search.trim() || undefined });
+        const res = await localDb.getItemsPaginated<StoneItem>('stones', page, 30, search.trim() || undefined);
         setItems(res.items);
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
-      } catch (err: any) {
-        showToast('error', 'Failed to load stones', err.message);
+      } catch {
+        showToast('error', 'Failed to load Kundan stones', err.message);
       }
     } finally {
       setIsLoading(false);
     }
   }, [page, search, showToast]);
 
-  const fetchValuation = useCallback(async () => {
+  const fetchValuation = useCallback(async (forceCloud = false) => {
     if (!isOwner) return;
     try {
-      // Compute valuation locally (instant)
-      const val = await localDb.getValuation('stones');
-      setValuation(val);
+      if (!forceCloud) {
+        const val = await localDb.getValuation('stones');
+        if (val > 0 || !navigator.onLine) {
+          setValuation(val);
+          return;
+        }
+      }
+      const res = await api.inventory.getValuation('stones');
+      setValuation(res.total_value);
     } catch {
-      // Fallback to API
       try {
-        const res = await api.inventory.getValuation('stones');
-        setValuation(res.total_value);
+        const val = await localDb.getValuation('stones');
+        setValuation(val);
       } catch { /* ignore */ }
     }
   }, [isOwner]);
@@ -191,9 +214,9 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
         }}
       >
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Precious & Synthetic Stones</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 700 }}>Kundan Stone</h2>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-            Gemstone varieties, zirconias, and synthetic stones (counted in pieces / PC).
+            Kundan stones, gemstone varieties, and settings (counted in pieces / PC).
           </p>
         </div>
 
@@ -213,7 +236,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
               <IndianRupee size={16} color="var(--teal-deep)" />
               <div>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                  Stones Valuation
+                  Kundan Stone Valuation
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--teal-deep)' }} className="mono">
                   ₹{valuation.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -224,10 +247,23 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
 
           <GeneratePdfButton
             category="stones"
-            categoryTitle="Precious & Synthetic Stones"
+            categoryTitle="Kundan Stone"
             username={user.username}
             showToast={showToast}
           />
+
+          <button
+            onClick={() => {
+              fetchItems(true);
+              fetchValuation(true);
+              showToast('info', 'Refreshing', 'Syncing Kundan stones with cloud...');
+            }}
+            className="btn btn-secondary"
+            title="Refresh Kundan stones from cloud"
+            disabled={isLoading}
+          >
+            <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} /> Refresh
+          </button>
 
           {isOwner && (
             <button
@@ -237,7 +273,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
               }}
               className="btn btn-primary"
             >
-              <Plus size={16} /> New Stone Item
+              <Plus size={16} /> New Kundan Stone
             </button>
           )}
         </div>
@@ -251,7 +287,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
             type="text"
             className="input"
             style={{ paddingLeft: 38 }}
-            placeholder="Search stone variety / ID..."
+            placeholder="Search Kundan Stone variety / ID..."
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -260,7 +296,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
           />
         </div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-          Showing <strong>{items.length}</strong> of <strong>{total}</strong> stone varieties
+          Showing <strong>{items.length}</strong> of <strong>{total}</strong> Kundan Stone varieties
         </div>
       </div>
 
@@ -268,7 +304,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
           <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 12px' }} />
-          <div>Loading stones inventory...</div>
+          <div>Loading Kundan Stones inventory...</div>
         </div>
       ) : items.length === 0 ? (
         <div
@@ -281,17 +317,27 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
           }}
         >
           <Gem size={40} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
-          <h3 style={{ fontSize: 16 }}>No Stones Found</h3>
+          <h3 style={{ fontSize: 16 }}>No Kundan Stones Found</h3>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-            {search ? 'No match found.' : 'Create a stone record to get started.'}
+            {search ? 'No match found.' : 'Create a Kundan Stone record or refresh from cloud to get started.'}
           </p>
+          <button
+            onClick={() => {
+              fetchItems(true);
+              fetchValuation(true);
+            }}
+            className="btn btn-secondary"
+            style={{ marginTop: 14 }}
+          >
+            <RefreshCw size={14} /> Refresh from Cloud
+          </button>
         </div>
       ) : (
         <div className="table-container">
           <table className="data-table">
             <thead>
               <tr>
-                <th>Stone Variety / ID</th>
+                <th>Kundan Stone Variety / ID</th>
                 <th>Current Stock</th>
                 <th>Unit</th>
                 {isOwner && <th>Cost Price (₹)</th>}
@@ -413,7 +459,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
         <div className="modal-backdrop">
           <div className="modal-content">
             <div className="modal-header">
-              <h3 style={{ fontSize: 16, fontWeight: 700 }}>Add Stone Item</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700 }}>Add Kundan Stone Item</h3>
               <button
                 onClick={() => setIsCreateOpen(false)}
                 style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
@@ -425,7 +471,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
               <div className="modal-body">
                 <div className="form-group">
                   <label className="form-label">
-                    Stone ID / Variety Name <span className="required">*</span>
+                    Kundan Stone ID / Variety Name <span className="required">*</span>
                   </label>
                   <input
                     type="text"
@@ -503,7 +549,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Create Stone Item'}
+                  {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : 'Create Kundan Stone Item'}
                 </button>
               </div>
             </form>
@@ -527,7 +573,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
             <form onSubmit={handleEditSubmit}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Stone ID / Variety</label>
+                  <label className="form-label">Kundan Stone ID / Variety</label>
                   <input
                     type="text"
                     className="input mono"

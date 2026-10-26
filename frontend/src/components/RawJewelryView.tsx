@@ -44,20 +44,35 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
   const [formThreshold, setFormThreshold] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (forceCloud = false) => {
     setIsLoading(true);
     try {
-      const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined);
+      if (!forceCloud) {
+        const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined);
+        if (res.total > 0 || !navigator.onLine) {
+          setItems(res.items);
+          setTotal(res.total);
+          setTotalPages(res.totalPages || 1);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      const res = await api.inventory.listRaw({ page, limit: 30, search: search.trim() || undefined });
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch {
+
+      if (res.items.length > 0) {
+        await localDb.bulkUpsert('raw_jewelry', res.items);
+      }
+    } catch (err: any) {
       try {
-        const res = await api.inventory.listRaw({ page, limit: 30, search: search.trim() || undefined });
+        const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined);
         setItems(res.items);
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
-      } catch (err: any) {
+      } catch {
         showToast('error', 'Failed to load raw jewelry items', err.message);
       }
     } finally {

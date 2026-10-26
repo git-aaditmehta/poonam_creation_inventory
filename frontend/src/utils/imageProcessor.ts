@@ -27,13 +27,13 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
           const { canvas: fullCanvas } = resizeToCanvas(img, 900, 900);
           const fullDataUrl = fullCanvas.toDataURL(format, 0.75);
 
-          // Process Thumb (Max 200px aspect fit, ~10KB)
-          const { canvas: thumbCanvas } = resizeToCanvas(img, 200, 200);
-          const thumbDataUrl = thumbCanvas.toDataURL(format, 0.70);
+          // Process Thumb (Max 500px aspect fit — crisp 2x retina on all card grid layouts, ~25-35KB)
+          const { canvas: thumbCanvas } = resizeToCanvas(img, 500, 500);
+          const thumbDataUrl = thumbCanvas.toDataURL(format, 0.85);
 
           canvasToBlobSafe(fullCanvas, 0.75, format)
             .then((fullBlob) => {
-              canvasToBlobSafe(thumbCanvas, 0.70, format)
+              canvasToBlobSafe(thumbCanvas, 0.85, format)
                 .then((thumbBlob) => {
                   resolve({
                     fullBlob,

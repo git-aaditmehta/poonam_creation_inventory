@@ -251,7 +251,7 @@ export const BackupView: React.FC = () => {
                 {usage.d1.total_rows} Rows ({usage.d1.total_size_mb && usage.d1.total_size_mb >= 0.1 ? `${usage.d1.total_size_mb} MB` : `${usage.d1.total_size_kb || 0} KB`})
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-                Plated: {usage.d1.table_counts.plated_jewelry || 0} · Raw: {usage.d1.table_counts.raw_jewelry || 0} · Stones: {usage.d1.table_counts.stones || 0} · Foil: {usage.d1.table_counts.foil || 0} · Transactions: {usage.d1.table_counts.transactions || 0}
+                Plated: {usage.d1.table_counts.plated_jewelry || 0} · Raw: {usage.d1.table_counts.raw_jewelry || 0} · Kundan Stone: {usage.d1.table_counts.stones || 0} · Foil: {usage.d1.table_counts.foil || 0} · Transactions: {usage.d1.table_counts.transactions || 0}
               </div>
             </div>
           ) : (
@@ -287,7 +287,7 @@ export const BackupView: React.FC = () => {
         <div className="card">
           <h3 style={{ fontSize: 15, marginBottom: 6 }}>Export Master Data Workbook</h3>
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
-            Download complete catalog snapshot (Plated Jewelry, Raw Jewelry, Stones, and Foil with valuations).
+            Download complete catalog snapshot (Plated Jewelry, Raw Jewelry, Kundan Stone, and Foil with valuations).
           </p>
           <button
             onClick={handleExportMasterData}

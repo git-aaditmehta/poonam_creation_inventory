@@ -6,6 +6,7 @@ import {
   validateString, validatePositiveNumber,
   validateUnit, rupeesToPaisa, collectErrors,
 } from '../utils/validation';
+import { logSyncChange } from '../utils/syncLog';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -235,7 +236,15 @@ excel.post('/commit-row', async (c) => {
     ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold).run();
   }
 
-  return c.json({ success: true, id, item_id: body.item_id.trim() }, 201);
+  // Fetch the created item and log CDC change for sync
+  const createdRow = await c.env.DB.prepare(
+    `SELECT * FROM ${table} WHERE id = ?`
+  ).bind(id).first<Record<string, unknown>>();
+  if (createdRow) {
+    await logSyncChange(c.env.DB, table, id, 'CREATE', createdRow);
+  }
+
+  return c.json({ success: true, id, item_id: body.item_id.trim(), item: createdRow }, 201);
 });
 
 export default excel;

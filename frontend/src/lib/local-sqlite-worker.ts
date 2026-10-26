@@ -120,6 +120,62 @@ CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Costing System Tables (Strictly Private & Local-Only, Never Cloud-Synced)
+CREATE TABLE IF NOT EXISTS costing_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS costing_categories (
+  id TEXT PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_costing_categories_order ON costing_categories(sort_order, name);
+
+CREATE TABLE IF NOT EXISTS costing_materials (
+  id TEXT PRIMARY KEY,
+  category_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  weight REAL DEFAULT NULL,
+  cost_price REAL DEFAULT NULL,
+  is_deleted INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_costing_materials_cat ON costing_materials(category_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_costing_materials_name ON costing_materials(name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS jewelry_costing (
+  id TEXT PRIMARY KEY,
+  plated_jewelry_id TEXT UNIQUE NOT NULL,
+  weight REAL NOT NULL DEFAULT 0,
+  cached_total_cost REAL NOT NULL DEFAULT 0,
+  is_complete INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_jewelry_costing_item ON jewelry_costing(plated_jewelry_id);
+
+CREATE TABLE IF NOT EXISTS jewelry_costing_materials (
+  id TEXT PRIMARY KEY,
+  jewelry_costing_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  material_id TEXT NOT NULL,
+  material_name TEXT NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  unit_cost REAL DEFAULT NULL,
+  extended_cost REAL DEFAULT NULL,
+  weight REAL DEFAULT NULL,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_jcm_costing_id ON jewelry_costing_materials(jewelry_costing_id);
+CREATE INDEX IF NOT EXISTS idx_jcm_material_id ON jewelry_costing_materials(material_id);
 `;
 
 // ── Initialization ─────────────────────────────────────────────
@@ -182,6 +238,23 @@ ready = (async () => {
       } catch {
         // Column already exists, safe to ignore
       }
+    }
+
+    // Seed default settings and initial categories if not present
+    try {
+      db.exec(`
+        INSERT OR IGNORE INTO costing_settings (key, value, updated_at)
+        VALUES ('multiplier_x', '18.00', datetime('now'));
+
+        INSERT OR IGNORE INTO costing_categories (id, name, sort_order, is_system, created_at, updated_at)
+        VALUES 
+          ('ad_stone', 'AD Stone', 1, 1, datetime('now'), datetime('now')),
+          ('kundan_stone', 'Kundan Stone', 2, 1, datetime('now'), datetime('now')),
+          ('mop', 'MOP', 3, 1, datetime('now'), datetime('now')),
+          ('hepoxy', 'Hepoxy', 4, 1, datetime('now'), datetime('now'));
+      `);
+    } catch (seedErr) {
+      console.warn('[SQLite Worker] Costing seed warning:', seedErr);
     }
 
     console.log('[SQLite Worker] Schema & migrations initialized');

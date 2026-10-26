@@ -71,7 +71,7 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
           <CheckCircle2 size={48} color="var(--emerald-text)" style={{ margin: '0 auto 16px' }} />
           <h3 style={{ fontSize: 18, color: 'var(--emerald-text)' }}>All Inventories Healthy</h3>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 6 }}>
-            Every item across Plated, Raw, Stones, and Foil meets or exceeds its low stock threshold.
+            Every item across Plated, Raw, Kundan Stone, and Foil meets or exceeds its low stock threshold.
           </p>
         </div>
       ) : (

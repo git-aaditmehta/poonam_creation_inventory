@@ -17,6 +17,8 @@ import { ExcelImportView } from './components/ExcelImportView';
 import { StaffManagementView } from './components/StaffManagementView';
 import { BackupView } from './components/BackupView';
 import { SyncQueueView } from './components/SyncQueueView';
+import { CostingView } from './components/CostingView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -217,6 +219,11 @@ const AppContent: React.FC = () => {
             initialItem={opItem}
             onOperationSuccess={() => updateLowStockCount()}
           />
+        )}
+        {activeTab === 'costing' && currentUser.role === 'owner' && (
+          <ErrorBoundary fallbackTitle="Costing System Error">
+            <CostingView />
+          </ErrorBoundary>
         )}
         {activeTab === 'low-stock' && currentUser.role === 'owner' && (
           <LowStockView

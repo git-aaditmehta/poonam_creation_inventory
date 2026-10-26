@@ -352,7 +352,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
           className={`btn ${category === 'stones' ? 'btn-primary' : 'btn-secondary'}`}
           style={{ padding: '10px 8px', fontSize: 12 }}
         >
-          <Gem size={15} /> Stones
+          <Gem size={15} /> Kundan Stone
         </button>
         <button
           type="button"

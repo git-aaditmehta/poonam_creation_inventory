@@ -123,7 +123,23 @@ class SyncEngine {
 
     // Check if bootstrap is needed
     const checkpoint = await localDb.getSyncState('checkpoint');
-    const bootstrapDone = checkpoint !== null;
+    let totalLocalItems = 0;
+    let sCount = 0;
+    try {
+      const [s, p, r, f] = await Promise.all([
+        localDb.count('stones'),
+        localDb.count('plated_jewelry'),
+        localDb.count('raw_jewelry'),
+        localDb.count('foil'),
+      ]);
+      sCount = s;
+      totalLocalItems = s + p + r + f;
+    } catch {
+      totalLocalItems = 0;
+    }
+
+    // Bootstrap is complete only if checkpoint exists AND local inventory tables contain data (including stones)
+    const bootstrapDone = checkpoint !== null && totalLocalItems > 0 && sCount > 0;
     this._updateStatus({ bootstrapComplete: bootstrapDone });
 
     if (!bootstrapDone && navigator.onLine) {

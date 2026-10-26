@@ -46,20 +46,35 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   const [formCost, setFormCost] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (forceCloud = false) => {
     setIsLoading(true);
     try {
-      const res = await localDb.getItemsPaginated<FoilItem>('foil', page, 30, search.trim() || undefined);
+      if (!forceCloud) {
+        const res = await localDb.getItemsPaginated<FoilItem>('foil', page, 30, search.trim() || undefined);
+        if (res.total > 0 || !navigator.onLine) {
+          setItems(res.items);
+          setTotal(res.total);
+          setTotalPages(res.totalPages || 1);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      const res = await api.inventory.listFoil({ page, limit: 30, search: search.trim() || undefined });
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch {
+
+      if (res.items.length > 0) {
+        await localDb.bulkUpsert('foil', res.items);
+      }
+    } catch (err: any) {
       try {
-        const res = await api.inventory.listFoil({ page, limit: 30, search: search.trim() || undefined });
+        const res = await localDb.getItemsPaginated<FoilItem>('foil', page, 30, search.trim() || undefined);
         setItems(res.items);
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
-      } catch (err: any) {
+      } catch {
         showToast('error', 'Failed to load foil items', err.message);
       }
     } finally {
@@ -67,15 +82,22 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
     }
   }, [page, search, showToast]);
 
-  const fetchValuation = useCallback(async () => {
+  const fetchValuation = useCallback(async (forceCloud = false) => {
     if (!isOwner) return;
     try {
-      const val = await localDb.getValuation('foil');
-      setValuation(val);
+      if (!forceCloud) {
+        const val = await localDb.getValuation('foil');
+        if (val > 0 || !navigator.onLine) {
+          setValuation(val);
+          return;
+        }
+      }
+      const res = await api.inventory.getValuation('foil');
+      setValuation(res.total_value);
     } catch {
       try {
-        const res = await api.inventory.getValuation('foil');
-        setValuation(res.total_value);
+        const val = await localDb.getValuation('foil');
+        setValuation(val);
       } catch { /* ignore */ }
     }
   }, [isOwner]);

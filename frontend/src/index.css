@@ -57,6 +57,11 @@
   --gold-border: var(--accent-border);
   --gold-focus: var(--accent-focus);
 
+  /* Surface & Semantic aliases */
+  --bg-card: var(--bg-surface-1);
+  --bg-secondary: var(--bg-surface-2);
+  --teal-deep-light: rgba(27, 58, 75, 0.08);
+
   --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
@@ -895,4 +900,120 @@ code, kbd, pre, .mono {
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ========================= COSTING & UTILITY CLASSES ========================= */
+.modal-card {
+  background: var(--bg-surface-1);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-xl);
+  width: 100%;
+  max-width: 540px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  padding: 24px;
+  color: var(--text-primary);
+  animation: scaleUp var(--transition-fast) ease-out;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.input-field {
+  width: 100%;
+  background: var(--bg-surface-1);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  transition: all var(--transition-fast);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--teal-mid);
+  box-shadow: 0 0 0 3px var(--teal-focus);
+}
+
+.btn-icon {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+  line-height: 1;
+}
+
+.btn-icon:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.btn-icon.danger {
+  color: var(--rose-text);
+}
+
+.btn-icon.danger:hover {
+  background: var(--rose-bg);
+  border-color: var(--rose-border);
+  color: var(--rose-text);
+}
+
+/* Costing Spreadsheet Sticky Column Shadows */
+.costing-sticky-left {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-surface-1) !important;
+  border-right: 2px solid var(--border-medium) !important;
+  box-shadow: 2px 0 6px rgba(44, 62, 80, 0.05);
+}
+
+.costing-sticky-left-header {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--bg-surface-2) !important;
+  border-right: 2px solid var(--border-medium) !important;
+  box-shadow: 2px 0 6px rgba(44, 62, 80, 0.05);
+}
+
+.costing-sticky-right {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--bg-surface-1) !important;
+  border-left: 2px solid var(--border-medium) !important;
+  box-shadow: -2px 0 6px rgba(44, 62, 80, 0.05);
+}
+
+.costing-sticky-right-header {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: var(--bg-surface-2) !important;
+  border-left: 2px solid var(--border-medium) !important;
+  box-shadow: -2px 0 6px rgba(44, 62, 80, 0.05);
+}
+
+.data-table tr:hover .costing-sticky-left {
+  background: var(--bg-surface-hover) !important;
+}
+
+.data-table tr:hover .costing-sticky-right {
+  background: var(--bg-surface-hover) !important;
 }

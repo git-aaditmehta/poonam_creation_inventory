@@ -256,7 +256,7 @@ export const TransactionHistoryView: React.FC = () => {
           <option value="">All Categories</option>
           <option value="plated_jewelry">Plated Jewelry</option>
           <option value="raw_jewelry">Raw Jewelry</option>
-          <option value="stones">Stones</option>
+          <option value="stones">Kundan Stone</option>
           <option value="foil">Foil</option>
         </select>
 

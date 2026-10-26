@@ -202,10 +202,11 @@ class LocalSqlite {
   }
 
   /** Upsert a single item (INSERT OR REPLACE). */
-  async upsertItem(table: string, item: Record<string, any>): Promise<void> {
+  async upsertItem(table: string, rawItem: Record<string, any>): Promise<void> {
     const validTables = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil', 'transactions', 'pending_ops', 'sync_state'];
     if (!validTables.includes(table)) throw new Error(`Invalid table: ${table}`);
 
+    const item = this.sanitizeItemForTable(table, rawItem);
     const keys = Object.keys(item);
     const placeholders = keys.map(() => '?').join(', ');
     const values = keys.map((k) => item[k]);
@@ -222,7 +223,8 @@ class LocalSqlite {
     // Use a transaction for performance
     await this.exec('BEGIN TRANSACTION');
     try {
-      for (const item of items) {
+      for (const rawItem of items) {
+        const item = this.sanitizeItemForTable(table, rawItem);
         const keys = Object.keys(item);
         const placeholders = keys.map(() => '?').join(', ');
         const values = keys.map((k) => item[k]);
@@ -236,6 +238,82 @@ class LocalSqlite {
       await this.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  /** Sanitize and normalize item fields to match SQLite table schema */
+  sanitizeItemForTable(table: string, rawItem: Record<string, any>): Record<string, any> {
+    const TABLE_COLUMNS: Record<string, string[]> = {
+      plated_jewelry: [
+        'id', 'item_id', 'quantity', 'unit', 'low_stock_threshold',
+        'cost_price_cents', 'cost_price', 'image_key', 'thumb_key',
+        'is_low_stock', 'is_deleted', 'created_at', 'updated_at',
+      ],
+      raw_jewelry: [
+        'id', 'item_id', 'quantity', 'unit', 'low_stock_threshold',
+        'is_low_stock', 'is_deleted', 'created_at', 'updated_at',
+      ],
+      stones: [
+        'id', 'item_id', 'quantity', 'unit', 'low_stock_threshold',
+        'cost_price_cents', 'cost_price', 'is_low_stock', 'is_deleted',
+        'created_at', 'updated_at',
+      ],
+      foil: [
+        'id', 'item_id', 'quantity', 'unit', 'low_stock_threshold',
+        'cost_price_cents', 'cost_price', 'is_low_stock', 'is_deleted',
+        'created_at', 'updated_at',
+      ],
+      transactions: [
+        'id', 'category', 'item_id', 'type', 'quantity', 'unit',
+        'reference_id', 'notes', 'created_by_user_id', 'created_by_username',
+        'cost_price_cents', 'cost_price', 'created_at',
+      ],
+      sync_state: ['key', 'value', 'updated_at'],
+      pending_ops: [
+        'id', 'operation_type', 'table_name', 'entity_id', 'endpoint',
+        'method', 'payload', 'status', 'retry_count', 'last_error',
+        'created_at', 'updated_at',
+      ],
+    };
+
+    const allowed = TABLE_COLUMNS[table];
+    const item: Record<string, any> = { ...rawItem };
+
+    // Harmonize cost fields
+    if (item.cost_price !== undefined && item.cost_price_cents === undefined) {
+      item.cost_price_cents = Math.round(Number(item.cost_price) * 100);
+    } else if (item.cost_price_cents !== undefined && item.cost_price === undefined) {
+      item.cost_price = Number(item.cost_price_cents) / 100;
+    }
+
+    // Harmonize booleans to integers (0 or 1)
+    if (typeof item.is_low_stock === 'boolean') {
+      item.is_low_stock = item.is_low_stock ? 1 : 0;
+    } else if (item.is_low_stock === undefined && item.quantity !== undefined && item.low_stock_threshold !== undefined) {
+      item.is_low_stock = Number(item.quantity) < Number(item.low_stock_threshold) ? 1 : 0;
+    }
+
+    if (typeof item.is_deleted === 'boolean') {
+      item.is_deleted = item.is_deleted ? 1 : 0;
+    } else if (item.is_deleted === undefined) {
+      item.is_deleted = 0;
+    }
+
+    if (!item.created_at) {
+      item.created_at = new Date().toISOString();
+    }
+    if (!item.updated_at) {
+      item.updated_at = new Date().toISOString();
+    }
+
+    if (!allowed) return item;
+
+    const sanitized: Record<string, any> = {};
+    for (const col of allowed) {
+      if (item[col] !== undefined) {
+        sanitized[col] = item[col];
+      }
+    }
+    return sanitized;
   }
 
   /** Delete an item by ID. */
@@ -261,14 +339,20 @@ class LocalSqlite {
     return row?.total ?? 0;
   }
 
-  /** Get valuation sum for a table that has cost_price_cents. */
+  /** Get valuation sum for a table that has cost_price_cents or cost_price. */
   async getValuation(table: string): Promise<number> {
     const validTables = ['plated_jewelry', 'stones', 'foil'];
     if (!validTables.includes(table)) throw new Error(`Invalid table for valuation: ${table}`);
     const row = await this.get<{ total_paisa: number }>(
-      `SELECT COALESCE(SUM(cost_price_cents * quantity), 0) as total_paisa FROM ${table} WHERE is_deleted = 0`
+      `SELECT COALESCE(SUM(
+        CASE 
+          WHEN cost_price_cents > 0 THEN cost_price_cents * quantity
+          WHEN cost_price > 0 THEN cost_price * 100 * quantity
+          ELSE 0
+        END
+      ), 0) as total_paisa FROM ${table} WHERE is_deleted = 0`
     );
-    return (row?.total_paisa ?? 0) / 100;
+    return Math.round(row?.total_paisa ?? 0) / 100;
   }
 
   /** Get low stock items across all categories. */
@@ -276,7 +360,7 @@ class LocalSqlite {
     const categories = [
       { table: 'plated_jewelry', name: 'Plated Jewelry', hasCost: true },
       { table: 'raw_jewelry', name: 'Raw Jewelry', hasCost: false },
-      { table: 'stones', name: 'Stones', hasCost: true },
+      { table: 'stones', name: 'Kundan Stone', hasCost: true },
       { table: 'foil', name: 'Foil', hasCost: true },
     ];
 

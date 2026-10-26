@@ -20,6 +20,7 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
+  IndianRupee,
 } from 'lucide-react';
 import type { User } from '../types';
 import type { SyncStatus } from '../lib/syncEngine';
@@ -30,6 +31,7 @@ export type ActiveTab =
   | 'stones'
   | 'foil'
   | 'operations'
+  | 'costing'
   | 'low-stock'
   | 'history'
   | 'excel'
@@ -151,10 +153,10 @@ export const Navigation: React.FC<NavigationProps> = ({
             <button
               className={`nav-item ${activeTab === 'stones' ? 'active' : ''}`}
               onClick={() => handleTabClick('stones')}
-              title="Precious & Synthetic Stones"
+              title="Kundan Stone"
             >
               <Gem size={18} />
-              <span>Stones</span>
+              <span>Kundan Stone</span>
             </button>
             <button
               className={`nav-item ${activeTab === 'foil' ? 'active' : ''}`}
@@ -200,6 +202,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                 Owner Controls
               </div>
               <div className="nav-group">
+                <button
+                  className={`nav-item ${activeTab === 'costing' ? 'active' : ''}`}
+                  onClick={() => handleTabClick('costing')}
+                  title="Private Jewelry Costing"
+                >
+                  <IndianRupee size={18} />
+                  <span>Jewelry Costing</span>
+                </button>
                 <button
                   className={`nav-item ${activeTab === 'low-stock' ? 'active' : ''} ${lowStockCount > 0 ? 'has-alert' : ''}`}
                   onClick={() => handleTabClick('low-stock')}
@@ -370,7 +380,7 @@ export const Navigation: React.FC<NavigationProps> = ({
           onClick={() => setActiveTab('stones')}
         >
           <Gem size={18} />
-          <span>Stones</span>
+          <span>Kundan</span>
         </button>
         <button
           className={`mobile-nav-btn ${activeTab === 'foil' ? 'active' : ''}`}
@@ -437,9 +447,10 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
           <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
             {activeTab === 'plated' && 'Plated Jewelry'}
             {activeTab === 'raw' && 'Raw Jewelry Casting'}
-            {activeTab === 'stones' && 'Precious & Synthetic Stones'}
+            {activeTab === 'stones' && 'Kundan Stone'}
             {activeTab === 'foil' && 'Silver & Metal Foil'}
             {activeTab === 'operations' && 'Stock Operations'}
+            {activeTab === 'costing' && 'Private Jewelry Costing'}
             {activeTab === 'low-stock' && 'Low Stock Center'}
             {activeTab === 'history' && 'Transaction History Audit'}
             {activeTab === 'excel' && 'Excel Import & Staging'}

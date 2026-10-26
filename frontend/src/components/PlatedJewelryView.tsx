@@ -72,21 +72,37 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  const fetchItems = useCallback(async () => {
+  const fetchItems = useCallback(async (forceCloud = false) => {
     setIsLoading(true);
     try {
-      // Read from local SQLite (instant)
-      const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined);
+      if (!forceCloud) {
+        // Read from local SQLite (instant)
+        const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined);
+        if (res.total > 0 || !navigator.onLine) {
+          setItems(res.items);
+          setTotal(res.total);
+          setTotalPages(res.totalPages || 1);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Fallback to cloud API if local DB returned 0 items or forceCloud requested
+      const res = await api.inventory.listPlated({ page, limit: 30, search: search.trim() || undefined });
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
-    } catch {
+
+      if (res.items.length > 0) {
+        await localDb.bulkUpsert('plated_jewelry', res.items);
+      }
+    } catch (err: any) {
       try {
-        const res = await api.inventory.listPlated({ page, limit: 30, search: search.trim() || undefined });
+        const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined);
         setItems(res.items);
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
-      } catch (err: any) {
+      } catch {
         showToast('error', 'Failed to load items', err.message);
       }
     } finally {
@@ -94,15 +110,22 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     }
   }, [page, search, showToast]);
 
-  const fetchValuation = useCallback(async () => {
+  const fetchValuation = useCallback(async (forceCloud = false) => {
     if (!isOwner) return;
     try {
-      const val = await localDb.getValuation('plated_jewelry');
-      setValuation(val);
+      if (!forceCloud) {
+        const val = await localDb.getValuation('plated_jewelry');
+        if (val > 0 || !navigator.onLine) {
+          setValuation(val);
+          return;
+        }
+      }
+      const res = await api.inventory.getValuation('plated-jewelry');
+      setValuation(res.total_value);
     } catch {
       try {
-        const res = await api.inventory.getValuation('plated-jewelry');
-        setValuation(res.total_value);
+        const val = await localDb.getValuation('plated_jewelry');
+        setValuation(val);
       } catch { /* ignore */ }
     }
   }, [isOwner]);
@@ -529,15 +552,16 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                   border: '1px solid var(--border-subtle)',
                 }}
               >
-                {item.thumb_key ? (
+                {item.image_key || item.thumb_key ? (
                   <img
-                    src={api.images.getUrl(item.thumb_key, item.updated_at)}
+                    src={api.images.getUrl(item.image_key || item.thumb_key, item.updated_at)}
                     alt={item.item_id}
                     style={{
                       width: '100%',
                       height: '100%',
                       objectFit: 'contain',
                       padding: 8,
+                      imageRendering: 'auto',
                     }}
                     loading="lazy"
                   />

@@ -21,6 +21,8 @@ import * as XLSX from 'xlsx';
 import { api } from '../api';
 import type { InventoryCategory, StagingRow, InventoryUnit } from '../types';
 import { useToast } from '../context/ToastContext';
+import { localDb } from '../lib/localDb';
+import { syncEngine } from '../lib/syncEngine';
 import {
   parseExcelWorksheet,
   CATEGORY_FIELDS,
@@ -486,13 +488,13 @@ export const ExcelImportView: React.FC = () => {
     }
   };
 
-  // Commit individual row to D1
+  // Commit individual row to D1 and local SQLite
   const commitRow = async (index: number) => {
     const row = stagingQueue[index];
     if (row.status !== 'valid') return;
 
     try {
-      await api.excel.commitRow({
+      const res = await api.excel.commitRow({
         category,
         item_id: row.item_id,
         quantity: Number(row.quantity),
@@ -500,6 +502,32 @@ export const ExcelImportView: React.FC = () => {
         low_stock_threshold: Number(row.low_stock_threshold),
         cost_price: row.cost_price !== '' ? Number(row.cost_price) : undefined,
       });
+
+      // Update local SQLite so Kundan Stones and all inventory views reflect changes instantly
+      const unit = row.unit || (category === 'stones' ? 'PC' : category === 'foil' ? 'KGS' : 'PC');
+      const costNum = row.cost_price !== '' && row.cost_price !== undefined ? Number(row.cost_price) : 0;
+      const costCents = Math.round(costNum * 100);
+      const now = new Date().toISOString();
+      const itemId = res?.id || (res as any)?.item?.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+      try {
+        await localDb.upsertItem(category, {
+          id: itemId,
+          item_id: row.item_id.trim(),
+          quantity: Number(row.quantity),
+          unit,
+          low_stock_threshold: Number(row.low_stock_threshold),
+          cost_price_cents: costCents,
+          cost_price: costNum,
+          is_deleted: 0,
+          created_at: now,
+          updated_at: now,
+        });
+        window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: category } }));
+        syncEngine.triggerSync().catch(() => {});
+      } catch (localErr) {
+        console.warn('Failed to upsert row to localDb:', localErr);
+      }
 
       const updated = [...stagingQueue];
       updated[index] = {
@@ -534,11 +562,12 @@ export const ExcelImportView: React.FC = () => {
 
     setIsBulkCommitting(true);
     let successCount = 0;
+    const committedLocalItems: Record<string, any>[] = [];
 
     for (const idx of validIndices) {
       const row = stagingQueue[idx];
       try {
-        await api.excel.commitRow({
+        const res = await api.excel.commitRow({
           category,
           item_id: row.item_id,
           quantity: Number(row.quantity),
@@ -547,6 +576,26 @@ export const ExcelImportView: React.FC = () => {
           cost_price: row.cost_price !== '' ? Number(row.cost_price) : undefined,
         });
         successCount++;
+
+        const unit = row.unit || (category === 'stones' ? 'PC' : category === 'foil' ? 'KGS' : 'PC');
+        const costNum = row.cost_price !== '' && row.cost_price !== undefined ? Number(row.cost_price) : 0;
+        const costCents = Math.round(costNum * 100);
+        const now = new Date().toISOString();
+        const itemId = res?.id || (res as any)?.item?.id || `local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+        committedLocalItems.push({
+          id: itemId,
+          item_id: row.item_id.trim(),
+          quantity: Number(row.quantity),
+          unit,
+          low_stock_threshold: Number(row.low_stock_threshold),
+          cost_price_cents: costCents,
+          cost_price: costNum,
+          is_deleted: 0,
+          created_at: now,
+          updated_at: now,
+        });
+
         setStagingQueue((prev) => {
           const next = [...prev];
           next[idx] = { ...next[idx], status: 'committed', validationErrors: [] };
@@ -561,8 +610,19 @@ export const ExcelImportView: React.FC = () => {
       }
     }
 
+    // Upsert all successfully committed items to local SQLite
+    if (committedLocalItems.length > 0) {
+      try {
+        await localDb.bulkUpsert(category, committedLocalItems);
+        window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: category } }));
+        syncEngine.triggerSync().catch(() => {});
+      } catch (localErr) {
+        console.warn('Failed to bulk upsert to localDb:', localErr);
+      }
+    }
+
     setIsBulkCommitting(false);
-    showToast('success', 'Bulk Commit Completed', `Saved ${successCount} items to D1 database`);
+    showToast('success', 'Bulk Commit Completed', `Saved ${successCount} items to ${category}`);
   };
 
   // Quick fill tool to apply a common value to all empty cells in staging queue
@@ -690,13 +750,13 @@ export const ExcelImportView: React.FC = () => {
         >
           <option value="plated_jewelry">Plated Jewelry</option>
           <option value="raw_jewelry">Raw Jewelry</option>
-          <option value="stones">Stones</option>
+          <option value="stones">Kundan Stone</option>
           <option value="foil">Foil</option>
         </select>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {category === 'plated_jewelry' && 'Maps: Item ID, Quantity, Unit, Threshold, Cost Price (₹)'}
           {category === 'raw_jewelry' && 'Maps: Raw Casting Code, Quantity, Unit, Threshold'}
-          {category === 'stones' && 'Maps: Stone Code, Quantity (PC), Threshold, Cost Price (₹)'}
+          {category === 'stones' && 'Maps: Kundan Stone Code, Quantity (PC), Threshold, Cost Price (₹)'}
           {category === 'foil' && 'Maps: Foil Code, Quantity (KGS), Threshold, Cost Price (₹)'}
         </span>
       </div>
