@@ -15,6 +15,10 @@ function mapItemForSync(row: Record<string, unknown>, hasCost: boolean, role: st
   const item: Record<string, unknown> = { ...row };
   if (hasCost && role === 'owner') {
     item.cost_price = paisaToRupees(row.cost_price_cents as number);
+  } else {
+    // Non-owner staff must never receive cost data
+    delete item.cost_price;
+    delete item.cost_price_cents;
   }
   item.is_low_stock = (row.quantity as number) < (row.low_stock_threshold as number);
   return item;
@@ -83,6 +87,10 @@ sync.get('/changes', authMiddleware, async (c) => {
         
         if (hasCost && role === 'owner' && payload.cost_price_cents !== undefined) {
           payload.cost_price = paisaToRupees(payload.cost_price_cents);
+        } else if (role !== 'owner') {
+          // Strictly delete cost fields for staff
+          delete payload.cost_price;
+          delete payload.cost_price_cents;
         }
         if (payload.quantity !== undefined && payload.low_stock_threshold !== undefined) {
           payload.is_low_stock = payload.quantity < payload.low_stock_threshold;

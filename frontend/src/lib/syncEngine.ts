@@ -347,9 +347,21 @@ class SyncEngine {
         }
 
         if (err.status === 409) {
-          // Conflict / duplicate — mark as done
-          await updatePendingOpStatus(op.id, 'DONE');
-          setTimeout(() => removePendingOp(op.id), 3000);
+          // If server reports idempotency / already processed duplicate, op is DONE
+          if (err.duplicate || err.message?.toLowerCase().includes('already processed')) {
+            console.log(`[Sync] Op ${op.id} was already processed on server`);
+            await updatePendingOpStatus(op.id, 'DONE');
+            setTimeout(() => removePendingOp(op.id), 3000);
+          } else {
+            // Concurrency rejection or business rule failure — mark FAILED and pull fresh state
+            console.warn(`[Sync] Op ${op.id} conflict:`, err.message);
+            await updatePendingOpStatus(op.id, 'FAILED', err.message || 'Conflict: operation rejected by server');
+            try {
+              await this._pull();
+            } catch (pullErr) {
+              console.warn('[Sync] Pull after conflict failed:', pullErr);
+            }
+          }
         } else if (err.status === 401) {
           // Auth error — stop pushing
           await updatePendingOpStatus(op.id, 'PENDING');

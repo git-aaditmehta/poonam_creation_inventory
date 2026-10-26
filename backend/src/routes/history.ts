@@ -141,12 +141,33 @@ history.post('/confirm-delete', async (c) => {
     return c.json({ error: 'Missing required parameters' }, 400);
   }
 
+  // Fetch IDs of transactions to be deleted so CDC can propagate the deletions to offline devices
+  const toDelete = await c.env.DB.prepare(
+    `SELECT id FROM transactions
+     WHERE created_at >= ? AND created_at < datetime(?, '+1 day')
+     AND rowid <= ?`
+  ).bind(body.date_from, body.date_to, body.boundary_rowid).all<{ id: string }>();
+
   // Delete only transactions within the date range AND at or before the boundary rowid
   const result = await c.env.DB.prepare(
     `DELETE FROM transactions
      WHERE created_at >= ? AND created_at < datetime(?, '+1 day')
      AND rowid <= ?`
   ).bind(body.date_from, body.date_to, body.boundary_rowid).run();
+
+  // Log CDC deletions in batches
+  if (toDelete.results && toDelete.results.length > 0) {
+    const userId = c.get('session').userId;
+    const statements = toDelete.results.map((row) =>
+      c.env.DB.prepare(
+        `INSERT INTO sync_changes (table_name, record_id, action, payload, performed_by)
+         VALUES ('transactions', ?, 'DELETE', ?, ?)`
+      ).bind(row.id, JSON.stringify({ id: row.id }), userId)
+    );
+    for (let i = 0; i < statements.length; i += 50) {
+      await c.env.DB.batch(statements.slice(i, i + 50));
+    }
+  }
 
   return c.json({
     success: true,

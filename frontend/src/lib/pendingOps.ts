@@ -27,10 +27,12 @@ export async function enqueuePendingOp(op: Omit<PendingOp, 'id' | 'status' | 're
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
+  const payloadStr = typeof op.payload === 'string' ? op.payload : JSON.stringify(op.payload);
+
   await localDb.exec(
     `INSERT INTO pending_ops (id, idempotency_key, entity_type, operation, endpoint, method, payload, status, retry_count, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?)`,
-    [id, op.idempotency_key, op.entity_type, op.operation, op.endpoint, op.method, op.payload, now]
+    [id, op.idempotency_key, op.entity_type, op.operation, op.endpoint, op.method, payloadStr, now]
   );
 
   // Notify listeners about new pending op
@@ -113,9 +115,17 @@ export async function clearDoneOps(): Promise<void> {
   await localDb.exec("DELETE FROM pending_ops WHERE status = 'DONE'");
 }
 
-/** Clear all operations (used on logout). */
-export async function clearAllOps(): Promise<void> {
-  await localDb.clearTable('pending_ops');
+/** 
+ * Clear operations safely.
+ * If force is false (default), only purges 'DONE' operations to preserve unsynced offline mutations.
+ * If force is true, purges the entire table.
+ */
+export async function clearAllOps(force = false): Promise<void> {
+  if (force) {
+    await localDb.clearTable('pending_ops');
+  } else {
+    await localDb.exec("DELETE FROM pending_ops WHERE status = 'DONE'");
+  }
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('pending-ops-changed'));
   }

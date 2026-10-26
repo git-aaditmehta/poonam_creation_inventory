@@ -61,7 +61,6 @@ stock.post('/operate', authMiddleware, async (c) => {
   const category = body.category as Category;
   const table = CATEGORY_TABLE[category];
   const operation = body.operation as 'add' | 'subtract';
-  const changeQty = body.quantity!;
   const idempotencyKey = body.idempotency_key!;
 
   // --- Check idempotency: reject duplicate submissions ---
@@ -90,13 +89,17 @@ stock.post('/operate', authMiddleware, async (c) => {
     return c.json({ error: 'Item not found' }, 404);
   }
 
-  const quantityBefore = item.quantity;
+  const isFractional = category === 'foil';
+  const roundQty = (val: number) => isFractional ? Math.round(val * 1000) / 1000 : Math.round(val);
+
+  const changeQty = roundQty(body.quantity!);
+  const quantityBefore = roundQty(item.quantity);
   let quantityAfter: number;
 
   if (operation === 'add') {
-    quantityAfter = quantityBefore + changeQty;
+    quantityAfter = roundQty(quantityBefore + changeQty);
   } else {
-    quantityAfter = quantityBefore - changeQty;
+    quantityAfter = roundQty(quantityBefore - changeQty);
     if (quantityAfter < 0) {
       return c.json({
         error: 'Insufficient stock',
@@ -110,15 +113,15 @@ stock.post('/operate', authMiddleware, async (c) => {
 
   // --- ATOMIC BATCH: update quantity + insert history ---
   // The conditional UPDATE ensures concurrency safety:
-  //   For subtract: only succeeds if quantity >= changeQty (prevents negative)
-  //   For add: only succeeds if quantity matches expected (prevents lost updates)
+  //   For subtract: only succeeds if rounded quantity >= changeQty (prevents negative)
+  //   For add: only succeeds if rounded quantity matches expected (prevents lost updates)
   const updateSQL = operation === 'subtract'
-    ? `UPDATE ${table} SET quantity = quantity - ?, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0 AND quantity >= ?`
-    : `UPDATE ${table} SET quantity = quantity + ?, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0 AND quantity = ?`;
+    ? `UPDATE ${table} SET quantity = ?, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0 AND ROUND(quantity, 3) >= ?`
+    : `UPDATE ${table} SET quantity = ?, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0 AND ROUND(quantity, 3) = ?`;
 
   const updateBindings = operation === 'subtract'
-    ? [changeQty, item.id, changeQty]
-    : [changeQty, item.id, quantityBefore];
+    ? [quantityAfter, item.id, changeQty]
+    : [quantityAfter, item.id, quantityBefore];
 
   const insertTxSQL = `INSERT INTO transactions
     (id, category, item_id, item_display_id, operation, quantity_before,

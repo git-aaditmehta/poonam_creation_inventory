@@ -308,6 +308,25 @@ export async function addCostingMaterial(params: {
   const weight = params.weight !== undefined && params.weight !== null ? roundTo2(params.weight) : null;
   const cost_price = params.cost_price !== undefined && params.cost_price !== null ? roundTo2(params.cost_price) : null;
 
+  // Uniqueness enforcement: prevent duplicate names or duplicate weights within category
+  if (params.category_id === 'hepoxy' && weight !== null) {
+    const existing = await localDb.get<CostingMaterial>(
+      'SELECT id FROM costing_materials WHERE category_id = ? AND is_deleted = 0 AND (ABS(weight - ?) < 0.001 OR LOWER(name) = LOWER(?))',
+      [params.category_id, weight, name]
+    );
+    if (existing) {
+      throw new Error(`Hepoxy material with weight ${weight.toFixed(2)} already exists.`);
+    }
+  } else {
+    const existing = await localDb.get<CostingMaterial>(
+      'SELECT id FROM costing_materials WHERE category_id = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?)',
+      [params.category_id, name]
+    );
+    if (existing) {
+      throw new Error(`Material "${name}" already exists in this category.`);
+    }
+  }
+
   await localDb.exec(
     'INSERT INTO costing_materials (id, category_id, name, weight, cost_price, is_deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
     [id, params.category_id, name, weight, cost_price, now, now]
@@ -327,7 +346,7 @@ export async function addCostingMaterial(params: {
 
 /**
  * Upsert a raw material: if a material with the same name (case-insensitive)
- * already exists in the category, update its weight and cost_price.
+ * or same weight (for Hepoxy) already exists in the category, update its weight and cost_price.
  * Otherwise, insert a new record.
  * Returns { material, wasUpdated } so callers can track update vs create.
  */
@@ -343,11 +362,19 @@ export async function upsertCostingMaterial(params: {
   const weight = params.weight !== undefined && params.weight !== null ? roundTo2(params.weight) : null;
   const cost_price = params.cost_price !== undefined && params.cost_price !== null ? roundTo2(params.cost_price) : null;
 
-  // Check for existing material in the same category (case-insensitive name match)
-  const existing = await localDb.get<CostingMaterial>(
-    'SELECT * FROM costing_materials WHERE category_id = ? AND LOWER(name) = LOWER(?) AND is_deleted = 0',
-    [params.category_id, name]
-  );
+  // Check for existing material in the same category
+  let existing: CostingMaterial | null = null;
+  if (params.category_id === 'hepoxy' && weight !== null) {
+    existing = await localDb.get<CostingMaterial>(
+      'SELECT * FROM costing_materials WHERE category_id = ? AND is_deleted = 0 AND (ABS(weight - ?) < 0.001 OR LOWER(name) = LOWER(?))',
+      [params.category_id, weight, name]
+    );
+  } else {
+    existing = await localDb.get<CostingMaterial>(
+      'SELECT * FROM costing_materials WHERE category_id = ? AND LOWER(name) = LOWER(?) AND is_deleted = 0',
+      [params.category_id, name]
+    );
+  }
 
   if (existing) {
     // Update existing record
@@ -414,6 +441,25 @@ export async function updateCostingMaterial(
   const newName = updates.name !== undefined ? updates.name.trim() : existing.name;
   const newWeight = updates.weight !== undefined ? (updates.weight !== null ? roundTo2(updates.weight) : null) : existing.weight;
   const newPrice = updates.cost_price !== undefined ? (updates.cost_price !== null ? roundTo2(updates.cost_price) : null) : existing.cost_price;
+
+  // Uniqueness check against other materials in this category
+  if (existing.category_id === 'hepoxy' && newWeight !== null) {
+    const duplicate = await localDb.get<CostingMaterial>(
+      'SELECT id FROM costing_materials WHERE category_id = ? AND id != ? AND is_deleted = 0 AND (ABS(weight - ?) < 0.001 OR LOWER(name) = LOWER(?))',
+      [existing.category_id, id, newWeight, newName]
+    );
+    if (duplicate) {
+      throw new Error(`Hepoxy material with weight ${newWeight.toFixed(2)} already exists.`);
+    }
+  } else {
+    const duplicate = await localDb.get<CostingMaterial>(
+      'SELECT id FROM costing_materials WHERE category_id = ? AND id != ? AND is_deleted = 0 AND LOWER(name) = LOWER(?)',
+      [existing.category_id, id, newName]
+    );
+    if (duplicate) {
+      throw new Error(`Material "${newName}" already exists in this category.`);
+    }
+  }
 
   await localDb.exec(
     'UPDATE costing_materials SET name = ?, weight = ?, cost_price = ?, updated_at = ? WHERE id = ?',
@@ -593,10 +639,11 @@ export async function getAllJewelryCostings(
   // Build lookup of current master material prices so updated prices propagate immediately
   const masterPriceMap = new Map<string, number>();
   try {
-    const rawMats = await localDb.query<any>('SELECT id, name, cost_price FROM costing_materials WHERE is_deleted = 0 AND cost_price IS NOT NULL');
+    const rawMats = await localDb.query<any>('SELECT id, category_id, name, cost_price FROM costing_materials WHERE is_deleted = 0 AND cost_price IS NOT NULL');
     for (const rm of rawMats) {
       if (rm.cost_price !== null && rm.cost_price !== undefined) {
         masterPriceMap.set(rm.id, Number(rm.cost_price));
+        masterPriceMap.set(`${rm.category_id}::${rm.name.toLowerCase().trim()}`, Number(rm.cost_price));
         masterPriceMap.set(rm.name.toLowerCase().trim(), Number(rm.cost_price));
       }
     }
@@ -607,6 +654,7 @@ export async function getAllJewelryCostings(
         : (sm.cost_price_cents ? sm.cost_price_cents / 100 : null);
       if (price !== null) {
         masterPriceMap.set(sm.id, price);
+        masterPriceMap.set(`kundan_stone::${sm.item_id.toLowerCase().trim()}`, price);
         masterPriceMap.set(sm.item_id.toLowerCase().trim(), price);
       }
     }
@@ -623,7 +671,10 @@ export async function getAllJewelryCostings(
     const materials: CostingMaterialEntry[] = matRows.map((m) => {
       let unitCost = m.unit_cost;
       if ((unitCost === null || unitCost === undefined) && m.material_id) {
-        const found = masterPriceMap.get(m.material_id) ?? masterPriceMap.get(m.material_name.toLowerCase().trim());
+        const scopedKey = m.category_id ? `${m.category_id}::${m.material_name.toLowerCase().trim()}` : '';
+        const found = masterPriceMap.get(m.material_id) 
+          ?? (scopedKey ? masterPriceMap.get(scopedKey) : undefined)
+          ?? masterPriceMap.get(m.material_name.toLowerCase().trim());
         if (found !== undefined) {
           unitCost = found;
         }

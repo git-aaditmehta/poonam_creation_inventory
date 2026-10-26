@@ -12,9 +12,26 @@ import sync from './routes/sync';
 
 const app = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
-// CORS for frontend
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+  'https://poonamcreation.pages.dev',
+  'https://poonamcreation.com',
+  'https://www.poonamcreation.com',
+];
+
+// Strict CORS: allow localhost, production domain, and preview branches
 app.use('/api/*', cors({
-  origin: (origin) => origin || '*',
+  origin: (origin) => {
+    if (!origin) return '';
+    if (ALLOWED_ORIGINS.includes(origin)) return origin;
+    if (/^https:\/\/[a-z0-9-]+\.poonamcreation\.pages\.dev$/.test(origin)) {
+      return origin;
+    }
+    return '';
+  },
   credentials: true,
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],

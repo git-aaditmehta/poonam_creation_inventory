@@ -20,6 +20,28 @@ const images = new Hono<AppEnv>();
 
 const MAX_FULL_SIZE = 5 * 1024 * 1024;  // 5MB
 const MAX_THUMB_SIZE = 500 * 1024;       // 500KB
+const ALLOWED_MIME = ['image/webp', 'image/jpeg', 'image/png'];
+
+function isValidImageBytes(buffer: ArrayBuffer): boolean {
+  if (buffer.byteLength < 12) return false;
+  const bytes = new Uint8Array(buffer);
+  // PNG: 89 50 4E 47
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
+    return true;
+  }
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
+    return true;
+  }
+  // WebP: 52 49 46 46 (RIFF) ... 57 45 42 50 (WEBP)
+  if (
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /** POST /api/images/upload — upload full + thumb for a plated jewelry item */
 images.post('/upload', authMiddleware, ownerOnly, async (c) => {
@@ -32,11 +54,26 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     return c.json({ error: 'full_image, thumb_image, and item_id are required' }, 400);
   }
 
+  if (
+    (fullImage.type && !ALLOWED_MIME.includes(fullImage.type.toLowerCase())) ||
+    (thumbImage.type && !ALLOWED_MIME.includes(thumbImage.type.toLowerCase()))
+  ) {
+    return c.json({ error: 'Unsupported image format. Allowed formats: WebP, JPEG, PNG.' }, 400);
+  }
+
   if (fullImage.size > MAX_FULL_SIZE) {
     return c.json({ error: 'Full image must be under 5MB' }, 400);
   }
   if (thumbImage.size > MAX_THUMB_SIZE) {
     return c.json({ error: 'Thumbnail must be under 500KB' }, 400);
+  }
+
+  // Upload to R2
+  const fullArrayBuffer = await fullImage.arrayBuffer();
+  const thumbArrayBuffer = await thumbImage.arrayBuffer();
+
+  if (!isValidImageBytes(fullArrayBuffer) || !isValidImageBytes(thumbArrayBuffer)) {
+    return c.json({ error: 'Corrupted or invalid image file content' }, 400);
   }
 
   // Verify the item exists
@@ -60,10 +97,6 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     try { await c.env.IMAGES.delete(item.thumb_key); } catch { /* ignore */ }
   }
 
-  // Upload to R2
-  const fullArrayBuffer = await fullImage.arrayBuffer();
-  const thumbArrayBuffer = await thumbImage.arrayBuffer();
-
   await c.env.IMAGES.put(imageKey, fullArrayBuffer, {
     httpMetadata: { contentType: fullImage.type || 'image/webp' },
   });
@@ -76,12 +109,26 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     `UPDATE plated_jewelry SET image_key = ?, thumb_key = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(imageKey, thumbKey, itemId).run();
 
+  // Log CDC change so syncing clients receive the new image keys
+  await c.env.DB.prepare(
+    `INSERT INTO sync_changes (table_name, record_id, action, payload, performed_by)
+     VALUES ('plated_jewelry', ?, 'UPDATE', ?, ?)`
+  ).bind(
+    itemId,
+    JSON.stringify({ id: itemId, image_key: imageKey, thumb_key: thumbKey }),
+    c.get('session').userId
+  ).run();
+
   return c.json({ success: true, image_key: imageKey, thumb_key: thumbKey });
 });
 
-/** GET /api/images/:key+ — serve image from R2 */
-images.get('/:key{.+}', async (c) => {
+/** GET /api/images/:key+ — serve image from R2 (Authenticated) */
+images.get('/:key{.+}', authMiddleware, async (c) => {
   const key = c.req.param('key');
+  if (!key || key.includes('..') || key.startsWith('/') || key.includes('\\')) {
+    return c.json({ error: 'Invalid image key' }, 400);
+  }
+
   const object = await c.env.IMAGES.get(key);
 
   if (!object) {
@@ -90,7 +137,8 @@ images.get('/:key{.+}', async (c) => {
 
   const headers = new Headers();
   headers.set('Content-Type', object.httpMetadata?.contentType || 'image/webp');
-  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Cache-Control', 'private, max-age=86400, stale-while-revalidate=604800');
 
   return new Response(object.body, { headers });
 });

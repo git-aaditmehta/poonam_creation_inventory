@@ -11,6 +11,29 @@ const auth = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
 const SESSION_DURATION_HOURS = 72; // 3 days
 
+// In-memory sliding window rate limiter for login brute-force protection
+const failedAttempts = new Map<string, { count: number; lockedUntil: number }>();
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 minutes lockout
+
+function getRateLimitKey(c: any, identifier: string): string {
+  const ip = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1';
+  return `${ip}::${identifier.toLowerCase().trim()}`;
+}
+
+export function validatePasswordComplexity(password: string): string | null {
+  if (password.length < 8) {
+    return 'Password must be at least 8 characters long';
+  }
+  if (!/[a-zA-Z]/.test(password)) {
+    return 'Password must contain at least one letter';
+  }
+  if (!/[0-9]/.test(password)) {
+    return 'Password must contain at least one number';
+  }
+  return null;
+}
+
 /** POST /api/auth/login */
 auth.post('/login', async (c) => {
   const body = await c.req.json<{ username?: string; email?: string; password?: string }>();
@@ -18,6 +41,20 @@ auth.post('/login', async (c) => {
 
   if (!password || (!username && !email)) {
     return c.json({ error: 'Username/email and password are required' }, 400);
+  }
+
+  const identifier = (username || email || '').trim();
+  const limitKey = getRateLimitKey(c, identifier);
+  const now = Date.now();
+  const record = failedAttempts.get(limitKey);
+
+  // Check if locked
+  if (record && record.lockedUntil > now) {
+    const remainingSeconds = Math.ceil((record.lockedUntil - now) / 1000);
+    return c.json({
+      error: `Too many failed login attempts. Please try again in ${remainingSeconds} seconds.`,
+      retry_after: remainingSeconds,
+    }, 429);
   }
 
   // Look up user by username or email (case-insensitive)
@@ -30,13 +67,36 @@ auth.post('/login', async (c) => {
   }>();
 
   if (!user) {
-    return c.json({ error: 'Invalid credentials' }, 401);
+    const newCount = (record?.count ?? 0) + 1;
+    if (newCount >= MAX_FAILED_ATTEMPTS) {
+      failedAttempts.set(limitKey, { count: newCount, lockedUntil: now + LOCKOUT_DURATION_MS });
+      return c.json({
+        error: 'Too many failed login attempts. Account temporarily locked for 5 minutes.',
+        retry_after: 300,
+      }, 429);
+    } else {
+      failedAttempts.set(limitKey, { count: newCount, lockedUntil: 0 });
+      return c.json({ error: 'Invalid credentials' }, 401);
+    }
   }
 
   const valid = await verifyPassword(password, user.password_hash);
   if (!valid) {
-    return c.json({ error: 'Invalid credentials' }, 401);
+    const newCount = (record?.count ?? 0) + 1;
+    if (newCount >= MAX_FAILED_ATTEMPTS) {
+      failedAttempts.set(limitKey, { count: newCount, lockedUntil: now + LOCKOUT_DURATION_MS });
+      return c.json({
+        error: 'Too many failed login attempts. Account temporarily locked for 5 minutes.',
+        retry_after: 300,
+      }, 429);
+    } else {
+      failedAttempts.set(limitKey, { count: newCount, lockedUntil: 0 });
+      return c.json({ error: 'Invalid credentials' }, 401);
+    }
   }
+
+  // Reset rate limiting on successful login
+  failedAttempts.delete(limitKey);
 
   // Generate session: raw token goes to cookie, hash goes to D1
   const rawToken = generateSessionToken();
@@ -135,8 +195,9 @@ auth.post('/staff', authMiddleware, ownerOnly, async (c) => {
   if (body.username.length < 3 || body.username.length > 50) {
     return c.json({ error: 'Username must be 3-50 characters' }, 400);
   }
-  if (body.password.length < 6) {
-    return c.json({ error: 'Password must be at least 6 characters' }, 400);
+  const complexityError = validatePasswordComplexity(body.password);
+  if (complexityError) {
+    return c.json({ error: complexityError }, 400);
   }
 
   // Check for duplicate username (case-insensitive)
@@ -203,8 +264,13 @@ auth.patch('/staff/:id', authMiddleware, ownerOnly, async (c) => {
 auth.post('/staff/:id/password', authMiddleware, ownerOnly, async (c) => {
   const staffId = c.req.param('id');
   const body = await c.req.json<{ new_password?: string }>();
-  if (!body.new_password || body.new_password.length < 6) {
-    return c.json({ error: 'Password must be at least 6 characters' }, 400);
+  if (!body.new_password) {
+    return c.json({ error: 'New password is required' }, 400);
+  }
+
+  const complexityError = validatePasswordComplexity(body.new_password);
+  if (complexityError) {
+    return c.json({ error: complexityError }, 400);
   }
 
   const passwordHash = await hashPassword(body.new_password);
@@ -218,6 +284,47 @@ auth.post('/staff/:id/password', authMiddleware, ownerOnly, async (c) => {
   ).bind(staffId).run();
 
   return c.json({ success: true });
+});
+
+/** POST /api/auth/change-password — allow authenticated user to update their own password */
+auth.post('/change-password', authMiddleware, async (c) => {
+  const session = c.get('session');
+  const body = await c.req.json<{ current_password?: string; new_password?: string }>();
+  const { current_password, new_password } = body;
+
+  if (!current_password || !new_password) {
+    return c.json({ error: 'Current password and new password are required' }, 400);
+  }
+
+  const complexityError = validatePasswordComplexity(new_password);
+  if (complexityError) {
+    return c.json({ error: complexityError }, 400);
+  }
+
+  const user = await c.env.DB.prepare(
+    'SELECT password_hash FROM users WHERE id = ?'
+  ).bind(session.userId).first<{ password_hash: string }>();
+
+  if (!user) {
+    return c.json({ error: 'User not found' }, 404);
+  }
+
+  const valid = await verifyPassword(current_password, user.password_hash);
+  if (!valid) {
+    return c.json({ error: 'Current password is incorrect' }, 401);
+  }
+
+  const newHash = await hashPassword(new_password);
+  await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(newHash, session.userId).run();
+
+  // Revoke all other sessions for this user, keeping the current session active
+  await c.env.DB.prepare(
+    `UPDATE sessions SET is_revoked = 1 WHERE user_id = ? AND id != ? AND is_revoked = 0`
+  ).bind(session.userId, session.sessionId).run();
+
+  return c.json({ success: true, message: 'Password updated successfully' });
 });
 
 export default auth;

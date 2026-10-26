@@ -191,6 +191,25 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       return;
     }
 
+    // Check for duplicate name or weight within the selected category
+    const isDuplicateAdd = materials.some((m) => {
+      if (isHepoxy && weight !== null && m.weight !== null) {
+        return Math.abs(m.weight - roundTo2(weight)) < 0.0001 || m.name.toLowerCase().trim() === name.toLowerCase().trim();
+      }
+      return m.name.toLowerCase().trim() === name.toLowerCase().trim();
+    });
+
+    if (isDuplicateAdd) {
+      showToast(
+        'error',
+        'Duplicate Material',
+        isHepoxy
+          ? `Hepoxy weight ${weight?.toFixed(2)} already exists in this category.`
+          : `Material "${name}" already exists in ${selectedCategory.name}.`
+      );
+      return;
+    }
+
     try {
       await addCostingMaterial({
         category_id: selectedCategory.id,
@@ -234,9 +253,34 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       ? parseFloat(editWeightInput)
       : editWeightInput.trim() !== '' ? parseFloat(editWeightInput) : null;
 
+    if (isHepoxy && (newWeight === null || isNaN(newWeight) || newWeight <= 0)) {
+      showToast('error', 'Validation Error', 'Hepoxy weight must be greater than zero.');
+      return;
+    }
+
     const newPrice = editPriceInput.trim() !== '' ? parseFloat(editPriceInput) : null;
     if (newPrice !== null && (isNaN(newPrice) || newPrice < 0)) {
       showToast('error', 'Validation Error', 'Cost price must be positive.');
+      return;
+    }
+
+    // Check for duplicate name or weight within category (excluding current item)
+    const isDuplicateEdit = materials.some((m) => {
+      if (m.id === editingMaterial.id) return false;
+      if (isHepoxy && newWeight !== null && m.weight !== null) {
+        return Math.abs(m.weight - roundTo2(newWeight)) < 0.0001 || m.name.toLowerCase().trim() === newName.toLowerCase().trim();
+      }
+      return m.name.toLowerCase().trim() === newName.toLowerCase().trim();
+    });
+
+    if (isDuplicateEdit) {
+      showToast(
+        'error',
+        'Duplicate Material',
+        isHepoxy
+          ? `Hepoxy weight ${newWeight?.toFixed(2)} already exists in this category.`
+          : `Material "${newName}" already exists in ${selectedCategory.name}.`
+      );
       return;
     }
 
@@ -553,9 +597,9 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   <thead>
                     <tr style={{ textAlign: 'left', background: 'var(--bg-surface-2)', borderBottom: '2px solid var(--border-medium)' }}>
                       <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>
-                        {isHepoxy ? 'HEPOXY WEIGHT' : 'MATERIAL NAME / ID'}
+                        {isHepoxy ? 'HEPOXY WEIGHT (GMS)' : 'MATERIAL NAME / ID'}
                       </th>
-                      {isHepoxy && (
+                      {!isHepoxy && (
                         <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>WEIGHT (GMS)</th>
                       )}
                       <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>COST PRICE (₹)</th>
@@ -565,7 +609,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   <tbody>
                     {materials.length === 0 ? (
                       <tr>
-                        <td colSpan={4} style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        <td colSpan={isHepoxy ? 3 : 4} style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
                           No materials found in {selectedCategory.name}. Click "Add Material" to create one.
                         </td>
                       </tr>
@@ -580,7 +624,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                             <td style={{ padding: '12px 14px', fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
                               {isHepoxy ? (mat.weight !== null ? mat.weight.toFixed(2) : mat.name) : mat.name}
                             </td>
-                            {isHepoxy && (
+                            {!isHepoxy && (
                               <td style={{ padding: '12px 14px', fontSize: 13, color: 'var(--text-primary)' }}>
                                 {mat.weight !== null ? mat.weight.toFixed(2) : '—'}
                               </td>

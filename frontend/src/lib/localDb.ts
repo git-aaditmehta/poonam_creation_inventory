@@ -263,15 +263,15 @@ class LocalSqlite {
         'created_at', 'updated_at',
       ],
       transactions: [
-        'id', 'category', 'item_id', 'type', 'quantity', 'unit',
-        'reference_id', 'notes', 'created_by_user_id', 'created_by_username',
-        'cost_price_cents', 'cost_price', 'created_at',
+        'id', 'category', 'item_id', 'item_display_id', 'operation',
+        'quantity_before', 'quantity_change', 'quantity_after', 'unit',
+        'performed_by', 'performer_name', 'idempotency_key', 'created_at',
       ],
       sync_state: ['key', 'value', 'updated_at'],
       pending_ops: [
-        'id', 'operation_type', 'table_name', 'entity_id', 'endpoint',
-        'method', 'payload', 'status', 'retry_count', 'last_error',
-        'created_at', 'updated_at',
+        'id', 'idempotency_key', 'entity_type', 'operation', 'endpoint',
+        'method', 'payload', 'status', 'error_message', 'retry_count',
+        'created_at', 'synced_at',
       ],
     };
 

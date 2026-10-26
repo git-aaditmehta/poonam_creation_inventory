@@ -127,7 +127,9 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
   // Projected stock balance
   const currentQty = selectedItem ? selectedItem.quantity : 0;
   const numQty = typeof quantity === 'number' ? quantity : 0;
-  const projectedBalance = operation === 'add' ? currentQty + numQty : currentQty - numQty;
+  const isFoil = category === 'foil';
+  const rawProjected = operation === 'add' ? currentQty + numQty : currentQty - numQty;
+  const projectedBalance = isFoil ? Math.round(rawProjected * 1000) / 1000 : Math.round(rawProjected);
   const isInsufficient = operation === 'subtract' && typeof quantity === 'number' && numQty > currentQty;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -148,8 +150,9 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
     setIsSubmitting(true);
     // Generate crypto idempotency key & IDs
     const idempotencyKey = `op_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const changeQty = Number(quantity);
-    const newBalance = operation === 'add' ? currentQty + changeQty : currentQty - changeQty;
+    const changeQty = isFoil ? Math.round(Number(quantity) * 1000) / 1000 : Math.round(Number(quantity));
+    const rawNewBalance = operation === 'add' ? currentQty + changeQty : currentQty - changeQty;
+    const newBalance = isFoil ? Math.round(rawNewBalance * 1000) / 1000 : Math.round(rawNewBalance);
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     const nowIso = new Date().toISOString();
     const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;

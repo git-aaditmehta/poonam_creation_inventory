@@ -257,6 +257,30 @@ ready = (async () => {
       console.warn('[SQLite Worker] Costing seed warning:', seedErr);
     }
 
+    // Deduplicate existing duplicate costing_materials (retaining the most recently updated record)
+    try {
+      db.exec(`
+        DELETE FROM costing_materials
+        WHERE id NOT IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (
+              PARTITION BY category_id, LOWER(name) 
+              ORDER BY updated_at DESC, created_at DESC
+            ) as rn
+            FROM costing_materials
+            WHERE is_deleted = 0
+          ) WHERE rn = 1
+        ) AND is_deleted = 0;
+      `);
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_costing_materials_unique 
+        ON costing_materials(category_id, name COLLATE NOCASE) 
+        WHERE is_deleted = 0;
+      `);
+    } catch (uniqueMigErr) {
+      console.warn('[SQLite Worker] Costing unique migration warning:', uniqueMigErr);
+    }
+
     console.log('[SQLite Worker] Schema & migrations initialized');
   } catch (err) {
     console.error('[SQLite Worker] Fatal init error:', err);

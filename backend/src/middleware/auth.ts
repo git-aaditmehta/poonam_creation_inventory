@@ -17,6 +17,9 @@ export async function authMiddleware(c: Context<{ Bindings: Env; Variables: { se
   if (!token) {
     token = getCookie(c, 'session_token');
   }
+  if (!token) {
+    token = c.req.query('token');
+  }
 
   if (!token) {
     return c.json({ error: 'Authentication required' }, 401);
