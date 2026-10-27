@@ -15,6 +15,8 @@ import { localDb } from '../lib/localDb';
 import type { RawJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { GeneratePdfButton } from './GeneratePdfButton';
+import { emitSyncStatus } from './SyncStatusBar';
+import { parseFriendlyError } from '../utils/friendlyErrors';
 
 interface RawJewelryViewProps {
   user: User;
@@ -92,28 +94,119 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formItemId.trim() || formQty === '' || formThreshold === '') {
-      showToast('error', 'Validation Error', 'All fields are strictly required');
+    const trimmedId = formItemId.trim();
+    if (!trimmedId || formQty === '' || formThreshold === '') {
+      const friendly = parseFriendlyError('Validation: Please fill all required fields', { categoryName: 'Raw Casting Jewelry' });
+      showToast('error', friendly.title, friendly.solution);
       return;
     }
 
-    setIsSubmitting(true);
+    // Fast local duplicate check (<1ms)
     try {
-      await api.inventory.createItem('raw-jewelry', {
-        item_id: formItemId.trim(),
-        quantity: Number(formQty),
-        unit: formUnit,
-        low_stock_threshold: Number(formThreshold),
-      });
-      showToast('success', 'Raw Casting Item Added', `${formItemId} saved to inventory`);
-      setIsCreateOpen(false);
-      resetForm();
-      fetchItems();
-    } catch (err: any) {
-      showToast('error', 'Creation Failed', err.message);
-    } finally {
-      setIsSubmitting(false);
+      const existing = await localDb.get('SELECT id FROM raw_jewelry WHERE item_id = ? AND is_deleted = 0', [trimmedId]);
+      if (existing) {
+        const friendly = parseFriendlyError('Item already exists', { categoryName: 'Raw Casting Jewelry', itemId: trimmedId });
+        showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
+        return;
+      }
+    } catch { /* proceed */ }
+
+    const clientId = 'raw_' + crypto.randomUUID();
+    const qtyNum = Number(formQty);
+    const thresholdNum = Number(formThreshold);
+    const unitVal = formUnit;
+    const nowIso = new Date().toISOString();
+
+    const newItem: RawJewelryItem = {
+      id: clientId,
+      item_id: trimmedId,
+      quantity: qtyNum,
+      unit: unitVal,
+      low_stock_threshold: thresholdNum,
+      is_low_stock: qtyNum < thresholdNum,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    // 1. Optimistic local insert (<2ms)
+    try {
+      await localDb.upsertItem('raw_jewelry', newItem);
+      setItems((prev) => [newItem, ...prev.filter((i) => i.id !== clientId)]);
+      setTotal((t) => t + 1);
+    } catch (dbErr) {
+      console.warn('[RawJewelry] Local insert error:', dbErr);
     }
+
+    // 2. Instant UI feedback (<5ms modal close)
+    showToast('success', 'Raw Casting Item Added', `${trimmedId} saved to inventory`);
+    setIsCreateOpen(false);
+    resetForm();
+
+    // 3. Notify Sync Status Bar
+    emitSyncStatus({
+      state: 'syncing',
+      title: 'Saving to Cloud',
+      message: `Uploading ${trimmedId}...`,
+      itemId: trimmedId,
+      category: 'Raw Casting',
+    });
+
+    // 4. Background Cloudflare sync (non-blocking)
+    (async () => {
+      try {
+        const res = await api.inventory.createItem('raw-jewelry', {
+          item_id: trimmedId,
+          quantity: qtyNum,
+          unit: unitVal,
+          low_stock_threshold: thresholdNum,
+        });
+
+        // Harmonize authoritative ID if different
+        if (res?.id && res.id !== clientId) {
+          await localDb.deleteItem('raw_jewelry', clientId);
+          const authoritativeItem = { ...newItem, id: res.id, ...(res.item || {}) };
+          await localDb.upsertItem('raw_jewelry', authoritativeItem);
+          setItems((prev) => prev.map((i) => (i.id === clientId ? authoritativeItem : i)));
+        }
+
+        emitSyncStatus({
+          state: 'synced',
+          title: 'Saved to Cloud',
+          message: `${trimmedId} is backed up to Cloudflare D1.`,
+          itemId: trimmedId,
+          category: 'Raw Casting',
+        });
+      } catch (err: any) {
+        const friendly = parseFriendlyError(err, { categoryName: 'Raw Casting Jewelry', itemId: trimmedId });
+
+        if (friendly.isOffline) {
+          emitSyncStatus({
+            state: 'offline',
+            title: 'Working Offline',
+            message: `${trimmedId} safely saved locally. Will sync when reconnected.`,
+            solution: friendly.solution,
+            itemId: trimmedId,
+            category: 'Raw Casting',
+          });
+        } else {
+          // Rollback on duplicate or invalid error
+          await localDb.deleteItem('raw_jewelry', clientId);
+          setItems((prev) => prev.filter((i) => i.id !== clientId));
+          setTotal((t) => Math.max(0, t - 1));
+
+          emitSyncStatus({
+            state: 'error',
+            title: friendly.title,
+            message: friendly.message,
+            solution: friendly.solution,
+            itemId: trimmedId,
+            category: 'Raw Casting',
+            error: friendly,
+          });
+          showToast('error', friendly.title, friendly.solution);
+        }
+      }
+    })();
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -131,7 +224,8 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
       setIsEditOpen(false);
       fetchItems();
     } catch (err: any) {
-      showToast('error', 'Update Failed', err.message);
+      const friendly = parseFriendlyError(err, { categoryName: 'Raw Casting Jewelry', itemId: formItemId.trim() });
+      showToast('error', friendly.title, friendly.solution);
     } finally {
       setIsSubmitting(false);
     }
@@ -142,10 +236,13 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
 
     try {
       await api.inventory.deleteItem('raw-jewelry', item.id);
+      await localDb.deleteItem('raw_jewelry', item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setTotal((t) => Math.max(0, t - 1));
       showToast('success', 'Item Deleted', `${item.item_id} removed`);
-      fetchItems();
     } catch (err: any) {
-      showToast('error', 'Delete Failed', err.message);
+      const friendly = parseFriendlyError(err, { categoryName: 'Raw Casting Jewelry', itemId: item.item_id });
+      showToast('error', friendly.title, friendly.solution);
     }
   };
 

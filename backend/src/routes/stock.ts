@@ -3,7 +3,6 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
 import { validateRequired, validateStrictPositiveNumber, collectErrors } from '../utils/validation';
-import { logSyncChange } from '../utils/syncLog';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -128,6 +127,28 @@ stock.post('/operate', authMiddleware, async (c) => {
      quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
+  const nowIso = new Date().toISOString();
+  const updatedItemPayload = {
+    id: item.id,
+    quantity: quantityAfter,
+    updated_at: nowIso,
+  };
+  const txPayload = {
+    id: txId,
+    category,
+    item_id: item.id,
+    item_display_id: item.item_id,
+    operation,
+    quantity_before: quantityBefore,
+    quantity_change: changeQty,
+    quantity_after: quantityAfter,
+    unit: item.unit,
+    performed_by: session.userId,
+    performer_name: session.username,
+    idempotency_key: idempotencyKey,
+    created_at: nowIso,
+  };
+
   const batchResults = await c.env.DB.batch([
     c.env.DB.prepare(updateSQL).bind(...updateBindings),
     c.env.DB.prepare(insertTxSQL).bind(
@@ -135,32 +156,21 @@ stock.post('/operate', authMiddleware, async (c) => {
       quantityBefore, changeQty, quantityAfter,
       item.unit, session.userId, session.username, idempotencyKey
     ),
+    c.env.DB.prepare(
+      `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) VALUES (?, ?, 'UPDATE', ?)`
+    ).bind(table, item.id, JSON.stringify(updatedItemPayload)),
+    c.env.DB.prepare(
+      `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) VALUES ('transactions', ?, 'CREATE', ?)`
+    ).bind(txId, JSON.stringify(txPayload)),
   ]);
 
   // Check if the UPDATE actually changed a row (concurrency check)
   const updateResult = batchResults[0];
   if (!updateResult.meta.changed_db) {
-    // The conditional UPDATE didn't match — concurrent modification or insufficient stock
-    // The batch is atomic, so the transaction record is also rolled back
     return c.json({
       error: 'Stock operation failed — inventory was modified concurrently. Please retry.',
       current_quantity: quantityBefore,
     }, 409);
-  }
-
-  // Log CDC changes for both the inventory item and the transaction
-  const updatedItem = await c.env.DB.prepare(
-    `SELECT * FROM ${table} WHERE id = ?`
-  ).bind(item.id).first();
-  if (updatedItem) {
-    await logSyncChange(c.env.DB, table, item.id, 'UPDATE', updatedItem as Record<string, unknown>);
-  }
-  // Log the new transaction
-  const txRecord = await c.env.DB.prepare(
-    'SELECT * FROM transactions WHERE id = ?'
-  ).bind(txId).first();
-  if (txRecord) {
-    await logSyncChange(c.env.DB, 'transactions', txId, 'CREATE', txRecord as Record<string, unknown>);
   }
 
   return c.json({

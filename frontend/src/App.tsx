@@ -18,6 +18,7 @@ import { StaffManagementView } from './components/StaffManagementView';
 import { BackupView } from './components/BackupView';
 import { SyncQueueView } from './components/SyncQueueView';
 import { CostingView } from './components/CostingView';
+import { SyncStatusBar } from './components/SyncStatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
@@ -186,6 +187,8 @@ const AppContent: React.FC = () => {
           setMobileMenuOpen={setMobileMenuOpen}
           syncStatus={syncStatus}
         />
+
+        <SyncStatusBar />
 
         <main className="main-content">
         {activeTab === 'plated' && (

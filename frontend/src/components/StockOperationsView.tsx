@@ -16,6 +16,7 @@ import { localDb } from '../lib/localDb';
 import { enqueuePendingOp, getAllPendingOps, type PendingOp } from '../lib/pendingOps';
 import type { InventoryCategory, BaseInventoryItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { parseFriendlyError } from '../utils/friendlyErrors';
 
 interface StockOperationsViewProps {
   user?: User;
@@ -303,7 +304,8 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         // Network failed during request — fall back to offline queue!
         await executeOffline();
       } else {
-        showToast('error', 'Stock Operation Failed', err.message);
+        const friendly = parseFriendlyError(err, { categoryName: category, itemId: selectedItem.item_id });
+        showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
       }
     } finally {
       setIsSubmitting(false);

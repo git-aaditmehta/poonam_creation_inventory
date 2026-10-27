@@ -158,28 +158,37 @@ function createCategoryRoutes(config: CategoryConfig) {
     const id = generateId();
     const unit = config.fixedUnit || body.unit;
     const costCents = config.hasCost ? rupeesToPaisa(body.cost_price) : 0;
+    const nowIso = new Date().toISOString();
 
-    if (config.hasCost) {
-      await c.env.DB.prepare(
-        `INSERT INTO ${config.table} (id, item_id, quantity, unit, low_stock_threshold, cost_price_cents)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold, costCents).run();
-    } else {
-      await c.env.DB.prepare(
-        `INSERT INTO ${config.table} (id, item_id, quantity, unit, low_stock_threshold)
-         VALUES (?, ?, ?, ?, ?)`
-      ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold).run();
-    }
+    const createdItem: Record<string, unknown> = {
+      id,
+      item_id: body.item_id.trim(),
+      quantity: body.quantity,
+      unit,
+      low_stock_threshold: body.low_stock_threshold,
+      ...(config.hasCost ? { cost_price_cents: costCents, cost_price: body.cost_price } : {}),
+      is_deleted: 0,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
 
-    // Fetch the created item and log CDC change
-    const createdRow = await c.env.DB.prepare(
-      `SELECT * FROM ${config.table} WHERE id = ?`
-    ).bind(id).first();
-    if (createdRow) {
-      await logSyncChange(c.env.DB, config.table, id, 'CREATE', createdRow as Record<string, unknown>);
-    }
+    const insertStmt = config.hasCost
+      ? c.env.DB.prepare(
+          `INSERT INTO ${config.table} (id, item_id, quantity, unit, low_stock_threshold, cost_price_cents, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold, costCents, nowIso, nowIso)
+      : c.env.DB.prepare(
+          `INSERT INTO ${config.table} (id, item_id, quantity, unit, low_stock_threshold, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold, nowIso, nowIso);
 
-    return c.json({ success: true, id, item_id: body.item_id.trim() }, 201);
+    const syncStmt = c.env.DB.prepare(
+      `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) VALUES (?, ?, 'CREATE', ?)`
+    ).bind(config.table, id, JSON.stringify(createdItem));
+
+    await c.env.DB.batch([insertStmt, syncStmt]);
+
+    return c.json({ success: true, id, item_id: body.item_id.trim(), item: createdItem }, 201);
   });
 
   // PUT /:id — update master data (owner only). Does NOT change quantity (use stock ops).

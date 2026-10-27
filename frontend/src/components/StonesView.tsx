@@ -17,6 +17,8 @@ import { localDb } from '../lib/localDb';
 import type { StoneItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { GeneratePdfButton } from './GeneratePdfButton';
+import { emitSyncStatus } from './SyncStatusBar';
+import { parseFriendlyError } from '../utils/friendlyErrors';
 
 interface StonesViewProps {
   user: User;
@@ -124,30 +126,132 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formItemId.trim() || formQty === '' || formThreshold === '' || formCost === '') {
-      showToast('error', 'Validation Error', 'All fields are strictly required');
+    const trimmedId = formItemId.trim();
+    if (!trimmedId || formQty === '' || formThreshold === '' || formCost === '') {
+      const friendly = parseFriendlyError('Validation: Please fill all required fields', { categoryName: 'Kundan Stone' });
+      showToast('error', friendly.title, friendly.solution);
       return;
     }
 
-    setIsSubmitting(true);
+    // Fast local duplicate check (<1ms)
     try {
-      await api.inventory.createItem('stones', {
-        item_id: formItemId.trim(),
-        quantity: Number(formQty),
-        unit: 'PC',
-        low_stock_threshold: Number(formThreshold),
-        cost_price: Number(formCost),
-      });
-      showToast('success', 'Stone Item Added', `${formItemId} added to inventory`);
-      setIsCreateOpen(false);
-      resetForm();
-      fetchItems();
-      fetchValuation();
-    } catch (err: any) {
-      showToast('error', 'Creation Failed', err.message);
-    } finally {
-      setIsSubmitting(false);
+      const existing = await localDb.get('SELECT id FROM stones WHERE item_id = ? AND is_deleted = 0', [trimmedId]);
+      if (existing) {
+        const friendly = parseFriendlyError('Item already exists', { categoryName: 'Kundan Stone', itemId: trimmedId });
+        showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
+        return;
+      }
+    } catch { /* proceed */ }
+
+    const clientId = 'stone_' + crypto.randomUUID();
+    const qtyNum = Number(formQty);
+    const thresholdNum = Number(formThreshold);
+    const costNum = Number(formCost);
+    const nowIso = new Date().toISOString();
+
+    const newItem: StoneItem = {
+      id: clientId,
+      item_id: trimmedId,
+      quantity: qtyNum,
+      unit: 'PC',
+      low_stock_threshold: thresholdNum,
+      cost_price: isOwner ? costNum : 0,
+      cost_price_cents: isOwner ? Math.round(costNum * 100) : 0,
+      is_low_stock: qtyNum < thresholdNum,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    // 1. Optimistic local insert (<2ms)
+    try {
+      await localDb.upsertItem('stones', newItem);
+      setItems((prev) => [newItem, ...prev.filter((i) => i.id !== clientId)]);
+      setTotal((t) => t + 1);
+
+      if (isOwner) {
+        const newTotalVal = await localDb.getValuation('stones');
+        setValuation(newTotalVal);
+      }
+    } catch (dbErr) {
+      console.warn('[Stones] Local insert error:', dbErr);
     }
+
+    // 2. Instant UI feedback (<5ms modal close)
+    showToast('success', 'Stone Item Added', `${trimmedId} saved to inventory`);
+    setIsCreateOpen(false);
+    resetForm();
+
+    // 3. Notify Sync Status Bar
+    emitSyncStatus({
+      state: 'syncing',
+      title: 'Saving to Cloud',
+      message: `Uploading ${trimmedId}...`,
+      itemId: trimmedId,
+      category: 'Kundan Stone',
+    });
+
+    // 4. Background Cloudflare sync (non-blocking)
+    (async () => {
+      try {
+        const res = await api.inventory.createItem('stones', {
+          item_id: trimmedId,
+          quantity: qtyNum,
+          unit: 'PC',
+          low_stock_threshold: thresholdNum,
+          cost_price: costNum,
+        });
+
+        // Harmonize authoritative ID if different
+        if (res?.id && res.id !== clientId) {
+          await localDb.deleteItem('stones', clientId);
+          const authoritativeItem = { ...newItem, id: res.id, ...(res.item || {}) };
+          await localDb.upsertItem('stones', authoritativeItem);
+          setItems((prev) => prev.map((i) => (i.id === clientId ? authoritativeItem : i)));
+        }
+
+        emitSyncStatus({
+          state: 'synced',
+          title: 'Saved to Cloud',
+          message: `${trimmedId} is backed up to Cloudflare D1.`,
+          itemId: trimmedId,
+          category: 'Kundan Stone',
+        });
+      } catch (err: any) {
+        const friendly = parseFriendlyError(err, { categoryName: 'Kundan Stone', itemId: trimmedId });
+
+        if (friendly.isOffline) {
+          emitSyncStatus({
+            state: 'offline',
+            title: 'Working Offline',
+            message: `${trimmedId} safely saved locally. Will sync when reconnected.`,
+            solution: friendly.solution,
+            itemId: trimmedId,
+            category: 'Kundan Stone',
+          });
+        } else {
+          // Rollback on duplicate or invalid error
+          await localDb.deleteItem('stones', clientId);
+          setItems((prev) => prev.filter((i) => i.id !== clientId));
+          setTotal((t) => Math.max(0, t - 1));
+
+          if (isOwner) {
+            const currentVal = await localDb.getValuation('stones');
+            setValuation(currentVal);
+          }
+
+          emitSyncStatus({
+            state: 'error',
+            title: friendly.title,
+            message: friendly.message,
+            solution: friendly.solution,
+            itemId: trimmedId,
+            category: 'Kundan Stone',
+            error: friendly,
+          });
+          showToast('error', friendly.title, friendly.solution);
+        }
+      }
+    })();
   };
 
   const handleEditSubmit = async (e: React.FormEvent) => {
@@ -166,7 +270,8 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
       fetchItems();
       fetchValuation();
     } catch (err: any) {
-      showToast('error', 'Update Failed', err.message);
+      const friendly = parseFriendlyError(err, { categoryName: 'Kundan Stone', itemId: formItemId.trim() });
+      showToast('error', friendly.title, friendly.solution);
     } finally {
       setIsSubmitting(false);
     }
@@ -177,11 +282,17 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
 
     try {
       await api.inventory.deleteItem('stones', item.id);
+      await localDb.deleteItem('stones', item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setTotal((t) => Math.max(0, t - 1));
+      if (isOwner) {
+        const v = await localDb.getValuation('stones');
+        setValuation(v);
+      }
       showToast('success', 'Item Deleted', `${item.item_id} removed`);
-      fetchItems();
-      fetchValuation();
     } catch (err: any) {
-      showToast('error', 'Delete Failed', err.message);
+      const friendly = parseFriendlyError(err, { categoryName: 'Kundan Stone', itemId: item.item_id });
+      showToast('error', friendly.title, friendly.solution);
     }
   };
 

@@ -155,7 +155,7 @@ export const api = {
     getValuation: (category: 'plated-jewelry' | 'stones' | 'foil') =>
       request<ValuationResponse>(`/api/inventory/${category}/valuation`),
     createItem: (category: string, payload: any) =>
-      request<{ success: boolean; id: string; item_id: string }>(`/api/inventory/${category}`, {
+      request<{ success: boolean; id: string; item_id: string; item?: any }>(`/api/inventory/${category}`, {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
@@ -275,6 +275,7 @@ export const api = {
       }),
     getUrl: (key?: string | null, timestamp?: string) => {
       if (!key) return '';
+      if (key.startsWith('blob:') || key.startsWith('data:')) return key;
       const base = `${API_BASE_URL}/api/images/${key}`;
       return timestamp ? `${base}?t=${encodeURIComponent(timestamp)}` : base;
     },

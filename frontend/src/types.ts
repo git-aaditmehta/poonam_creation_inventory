@@ -21,6 +21,7 @@ export interface BaseInventoryItem {
   low_stock_threshold: number;
   is_low_stock?: boolean;
   cost_price?: number; // Present only for owner
+  cost_price_cents?: number;
   created_at: string;
   updated_at: string;
 }

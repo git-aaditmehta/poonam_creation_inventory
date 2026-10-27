@@ -245,6 +245,18 @@ export async function invalidateImage(key: string): Promise<void> {
   // LRU eviction happens naturally
 }
 
+/** Cache an in-memory image Blob to IndexedDB and memory LRU, returning an object URL. */
+export async function cacheImageBlob(key: string, blob: Blob): Promise<string> {
+  try {
+    await idbPut(key, blob);
+  } catch (err) {
+    console.warn('[ImageCache] idbPut error:', err);
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  lru.set(key, objectUrl);
+  return objectUrl;
+}
+
 /** Get total size of cached images in bytes. */
 export async function getCachedImagesTotalSize(): Promise<number> {
   try {
