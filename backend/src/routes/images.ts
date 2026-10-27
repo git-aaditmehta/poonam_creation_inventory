@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
+import { logSyncChange } from '../utils/syncLog';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -110,20 +111,17 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
   ).bind(imageKey, thumbKey, itemId).run();
 
   // Log CDC change so syncing clients receive the new image keys
-  await c.env.DB.prepare(
-    `INSERT INTO sync_changes (table_name, record_id, action, payload, performed_by)
-     VALUES ('plated_jewelry', ?, 'UPDATE', ?, ?)`
-  ).bind(
-    itemId,
-    JSON.stringify({ id: itemId, image_key: imageKey, thumb_key: thumbKey }),
-    c.get('session').userId
-  ).run();
+  await logSyncChange(c.env.DB, 'plated_jewelry', itemId, 'UPDATE', {
+    id: itemId,
+    image_key: imageKey,
+    thumb_key: thumbKey,
+  });
 
   return c.json({ success: true, image_key: imageKey, thumb_key: thumbKey });
 });
 
-/** GET /api/images/:key+ — serve image from R2 (Authenticated) */
-images.get('/:key{.+}', authMiddleware, async (c) => {
+/** GET /api/images/:key+ — serve image from R2 */
+images.get('/:key{.+}', async (c) => {
   const key = c.req.param('key');
   if (!key || key.includes('..') || key.startsWith('/') || key.includes('\\')) {
     return c.json({ error: 'Invalid image key' }, 400);
@@ -138,7 +136,7 @@ images.get('/:key{.+}', authMiddleware, async (c) => {
   const headers = new Headers();
   headers.set('Content-Type', object.httpMetadata?.contentType || 'image/webp');
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Cache-Control', 'private, max-age=86400, stale-while-revalidate=604800');
+  headers.set('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
 
   return new Response(object.body, { headers });
 });

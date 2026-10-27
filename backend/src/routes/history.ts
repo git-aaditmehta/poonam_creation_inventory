@@ -157,12 +157,11 @@ history.post('/confirm-delete', async (c) => {
 
   // Log CDC deletions in batches
   if (toDelete.results && toDelete.results.length > 0) {
-    const userId = c.get('session').userId;
     const statements = toDelete.results.map((row) =>
       c.env.DB.prepare(
-        `INSERT INTO sync_changes (table_name, record_id, action, payload, performed_by)
-         VALUES ('transactions', ?, 'DELETE', ?, ?)`
-      ).bind(row.id, JSON.stringify({ id: row.id }), userId)
+        `INSERT INTO sync_changes (entity_type, entity_id, operation, payload)
+         VALUES ('transactions', ?, 'DELETE', ?)`
+      ).bind(row.id, JSON.stringify({ id: row.id }))
     );
     for (let i = 0; i < statements.length; i += 50) {
       await c.env.DB.batch(statements.slice(i, i + 50));
