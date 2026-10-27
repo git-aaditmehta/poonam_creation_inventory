@@ -20,14 +20,11 @@ const ALLOWED_ORIGINS = [
   'https://poonam-creation-inventory.vercel.app',
 ];
 
-// Strict CORS: allow localhost, Vercel frontend, and Vercel preview branches
+// Strict CORS: allow localhost and official Vercel frontend only
 app.use('/api/*', cors({
   origin: (origin) => {
     if (!origin) return '';
     if (ALLOWED_ORIGINS.includes(origin)) return origin;
-    if (/^https:\/\/poonam-creation-inventory(-[a-z0-9_-]+)?\.vercel\.app$/.test(origin)) {
-      return origin;
-    }
     return '';
   },
   credentials: true,

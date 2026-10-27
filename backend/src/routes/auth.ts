@@ -121,7 +121,7 @@ auth.post('/login', async (c) => {
   setCookie(c, 'session_token', rawToken, {
     httpOnly: true,
     secure: isHttps,
-    sameSite: isHttps ? 'None' : 'Lax',
+    sameSite: 'Lax',
     path: '/',
     maxAge: SESSION_DURATION_HOURS * 60 * 60,
   });
@@ -144,7 +144,7 @@ auth.post('/logout', authMiddleware, async (c) => {
   deleteCookie(c, 'session_token', {
     path: '/',
     secure: isHttps,
-    sameSite: isHttps ? 'None' : 'Lax',
+    sameSite: 'Lax',
   });
   return c.json({ success: true });
 });

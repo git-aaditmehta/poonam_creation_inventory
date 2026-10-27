@@ -8,21 +8,37 @@ import { hashSessionToken } from '../utils/crypto';
  * looks up the HASH in D1 (raw token never stored),
  * and attaches user info to context.
  */
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+  'https://poonam-creation-inventory.vercel.app',
+];
+
 export async function authMiddleware(c: Context<{ Bindings: Env; Variables: { session: SessionData } }>, next: Next) {
   let token: string | undefined;
+  let isCookieAuth = false;
+
   const authHeader = c.req.header('Authorization') || c.req.header('authorization');
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7).trim();
   }
   if (!token) {
     token = getCookie(c, 'session_token');
-  }
-  if (!token) {
-    token = c.req.query('token');
+    if (token) isCookieAuth = true;
   }
 
   if (!token) {
     return c.json({ error: 'Authentication required' }, 401);
+  }
+
+  // Anti-CSRF: If authenticated via cookie on a state-changing method, verify Origin
+  if (isCookieAuth && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(c.req.method)) {
+    const origin = c.req.header('Origin') || c.req.header('origin');
+    if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+      return c.json({ error: 'Cross-origin request rejected' }, 403);
+    }
   }
 
   const tokenHash = await hashSessionToken(token);

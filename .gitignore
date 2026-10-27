@@ -100,3 +100,13 @@ graphify-out/
 # Hyperframes / Brag launch videos
 brag-output/
 brag-output*/
+
+# Security audit skill output
+audit-output/
+audit-output*/
+
+# Enterprise documentation, valuation specifications & product images
+ENTERPRISE_PRODUCT_DOSSIER_AND_VALUATION_SPECIFICATION.md
+poonam_creation_product_dossier.pdf
+poonam creation images/
+product_showcase_images/

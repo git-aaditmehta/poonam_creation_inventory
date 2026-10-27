@@ -10,7 +10,7 @@ export function validateRequired(value: unknown, field: string): ValidationError
 }
 
 export function validatePositiveNumber(value: unknown, field: string): ValidationError | null {
-  if (typeof value !== 'number' || isNaN(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     return { field, message: `${field} must be a non-negative number` };
   }
   return null;
@@ -24,7 +24,7 @@ export function validatePositiveInteger(value: unknown, field: string): Validati
 }
 
 export function validateStrictPositiveNumber(value: unknown, field: string): ValidationError | null {
-  if (typeof value !== 'number' || isNaN(value) || value <= 0) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return { field, message: `${field} must be a positive number` };
   }
   return null;
