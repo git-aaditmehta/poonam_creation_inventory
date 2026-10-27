@@ -14,6 +14,7 @@ import {
   Package,
   ArrowUpDown,
   Layers,
+  ZoomIn,
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
@@ -56,6 +57,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [activeItem, setActiveItem] = useState<PlatedJewelryItem | null>(null);
   const [detailItem, setDetailItem] = useState<PlatedJewelryItem | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   // Form states
   const [formItemId, setFormItemId] = useState('');
@@ -696,9 +698,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                   border: '1px solid var(--border-subtle)',
                 }}
               >
-                {item.image_key || item.thumb_key ? (
+                {item.thumb_key || item.image_key ? (
                   <img
-                    src={api.images.getUrl(item.image_key || item.thumb_key, item.updated_at)}
+                    src={api.images.getUrl(item.thumb_key || item.image_key, item.updated_at)}
                     alt={item.item_id}
                     style={{
                       width: '100%',
@@ -833,12 +835,44 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         <div className="detail-overlay" onClick={() => setDetailItem(null)}>
           <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
             {/* Image Side */}
-            <div className="detail-panel-image">
+            <div
+              className="detail-panel-image"
+              style={{
+                position: 'relative',
+                cursor: detailItem.image_key || detailItem.thumb_key ? 'zoom-in' : 'default',
+              }}
+              onClick={() => {
+                const fullUrl = api.images.getUrl(detailItem.image_key || detailItem.thumb_key, detailItem.updated_at);
+                if (fullUrl) setLightboxUrl(fullUrl);
+              }}
+              title={detailItem.image_key || detailItem.thumb_key ? 'Click to view full screen high-resolution photo' : undefined}
+            >
               {detailItem.image_key || detailItem.thumb_key ? (
-                <img
-                  src={api.images.getUrl(detailItem.image_key || detailItem.thumb_key, detailItem.updated_at)}
-                  alt={detailItem.item_id}
-                />
+                <>
+                  <img
+                    src={api.images.getUrl(detailItem.image_key || detailItem.thumb_key, detailItem.updated_at)}
+                    alt={detailItem.item_id}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 12,
+                      right: 12,
+                      backgroundColor: 'rgba(0,0,0,0.65)',
+                      color: '#fff',
+                      borderRadius: 6,
+                      padding: '4px 8px',
+                      fontSize: 11,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      pointerEvents: 'none',
+                      backdropFilter: 'blur(4px)',
+                    }}
+                  >
+                    <ZoomIn size={12} /> High-Res
+                  </div>
+                </>
               ) : (
                 <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                   <ImageIcon size={48} />
@@ -974,6 +1008,61 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Lightbox / High-Res Fullscreen Zoom */}
+      {lightboxUrl && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 9999,
+            backgroundColor: 'rgba(0, 0, 0, 0.92)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+            cursor: 'zoom-out',
+            backdropFilter: 'blur(8px)',
+          }}
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            onClick={() => setLightboxUrl(null)}
+            style={{
+              position: 'absolute',
+              top: 24,
+              right: 24,
+              backgroundColor: 'rgba(255, 255, 255, 0.15)',
+              border: 'none',
+              borderRadius: '50%',
+              width: 40,
+              height: 40,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fff',
+              cursor: 'pointer',
+              zIndex: 10000,
+            }}
+            title="Close Fullscreen"
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="High-Res Jewelry Detail"
+            style={{
+              maxWidth: '92vw',
+              maxHeight: '92vh',
+              objectFit: 'contain',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+              borderRadius: 8,
+              cursor: 'default',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 
