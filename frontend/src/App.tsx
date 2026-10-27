@@ -18,6 +18,7 @@ import { StaffManagementView } from './components/StaffManagementView';
 import { BackupView } from './components/BackupView';
 import { SyncQueueView } from './components/SyncQueueView';
 import { CostingView } from './components/CostingView';
+import { CostingMaterialsView } from './components/CostingMaterialsView';
 import { SyncStatusBar } from './components/SyncStatusBar';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
@@ -225,7 +226,12 @@ const AppContent: React.FC = () => {
         )}
         {activeTab === 'costing' && currentUser.role === 'owner' && (
           <ErrorBoundary fallbackTitle="Costing System Error">
-            <CostingView />
+            <CostingView onNavigateToMaterials={() => setActiveTab('costing-materials')} />
+          </ErrorBoundary>
+        )}
+        {activeTab === 'costing-materials' && currentUser.role === 'owner' && (
+          <ErrorBoundary fallbackTitle="Costing Materials Error">
+            <CostingMaterialsView onNavigateToCosting={() => setActiveTab('costing')} />
           </ErrorBoundary>
         )}
         {activeTab === 'low-stock' && currentUser.role === 'owner' && (

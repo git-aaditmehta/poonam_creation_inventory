@@ -13,6 +13,8 @@ import {
   ChevronRight,
   ArrowLeft,
   X,
+  Download,
+  Upload,
 } from 'lucide-react';
 import {
   getCostingCategories,
@@ -30,18 +32,23 @@ import {
   type CostingMaterial,
 } from '../lib/costingDb';
 import { formatRupees, roundTo2 } from '../lib/costingEngine';
+import { exportRawMaterialsWorkbook } from '../lib/costingExcel';
+import { CostingExcelRestoreModal } from './CostingExcelRestoreModal';
 import { useToast } from '../context/ToastContext';
 
 interface CostingMaterialsViewProps {
   onBack?: () => void;
   onMaterialsChanged?: () => void;
+  onNavigateToCosting?: () => void;
 }
 
 export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
   onBack,
   onMaterialsChanged,
+  onNavigateToCosting,
 }) => {
   const { showToast } = useToast();
+  const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
 
   const [categories, setCategories] = useState<CostingCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<CostingCategory | null>(null);
@@ -178,7 +185,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
 
     const weight = isHepoxy
       ? parseFloat(materialWeightInput)
-      : materialWeightInput ? parseFloat(materialWeightInput) : null;
+      : null;
 
     if (isHepoxy && (isNaN(weight!) || weight! <= 0)) {
       showToast('error', 'Validation Error', 'Hepoxy weight must be greater than zero.');
@@ -251,7 +258,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
 
     const newWeight = isHepoxy
       ? parseFloat(editWeightInput)
-      : editWeightInput.trim() !== '' ? parseFloat(editWeightInput) : null;
+      : null;
 
     if (isHepoxy && (newWeight === null || isNaN(newWeight) || newWeight <= 0)) {
       showToast('error', 'Validation Error', 'Hepoxy weight must be greater than zero.');
@@ -372,13 +379,35 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
     }
   };
 
+  const handleExportMaterialsExcel = async () => {
+    try {
+      const materialsByCat: Record<string, CostingMaterial[]> = {};
+      for (const cat of categories) {
+        materialsByCat[cat.id] = await getCostingMaterialsByCategory(cat.id);
+      }
+      exportRawMaterialsWorkbook(categories, materialsByCat);
+      showToast('success', 'Materials Exported', 'Raw Materials Excel backup generated locally.');
+    } catch (err: any) {
+      showToast('error', 'Export Failed', err.message);
+    }
+  };
+
   const isHepoxy = selectedCategory?.id === 'hepoxy';
   const isKundanStone = selectedCategory?.id === 'kundan_stone';
 
   return (
     <div className="view-container">
       {/* Top Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 20,
+          flexWrap: 'wrap',
+          gap: 12,
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {onBack && (
             <button
@@ -390,23 +419,66 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
             </button>
           )}
           <div>
-            <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Material & Category Management</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h2 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Raw Materials & Categories</h2>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: 'rgba(13,148,136,0.15)',
+                  color: 'var(--teal-deep)',
+                  padding: '2px 8px',
+                  borderRadius: 9999,
+                  border: '1px solid rgba(13,148,136,0.3)',
+                }}
+              >
+                Private Local-Only
+              </span>
+            </div>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
               Manage raw materials, weights, and unit cost prices used for jewelry manufacturing costing.
             </p>
           </div>
         </div>
 
-        <button
-          onClick={() => {
-            setCategoryNameInput('');
-            setIsAddCategoryOpen(true);
-          }}
-          className="btn btn-primary"
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px' }}
-        >
-          <FolderPlus size={16} /> Add Category
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {onNavigateToCosting && (
+            <button
+              onClick={onNavigateToCosting}
+              className="btn btn-secondary"
+              title="Go to Jewelry Costing"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
+            >
+              <IndianRupee size={14} /> Jewelry Costing
+            </button>
+          )}
+          <button
+            onClick={handleExportMaterialsExcel}
+            className="btn btn-secondary"
+            title="Export Raw Materials Excel"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
+          >
+            <Download size={14} /> Materials Excel
+          </button>
+          <button
+            onClick={() => setIsRestoreModalOpen(true)}
+            className="btn btn-secondary"
+            title="Restore / Onboard Raw Materials from Excel"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
+          >
+            <Upload size={14} /> Restore Excel
+          </button>
+          <button
+            onClick={() => {
+              setCategoryNameInput('');
+              setIsAddCategoryOpen(true);
+            }}
+            className="btn btn-primary"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13 }}
+          >
+            <FolderPlus size={16} /> Add Category
+          </button>
+        </div>
       </div>
 
       {/* Main Grid: Left Category Sidebar / Right Material Details */}
@@ -599,9 +671,6 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                       <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>
                         {isHepoxy ? 'HEPOXY WEIGHT (GMS)' : 'MATERIAL NAME / ID'}
                       </th>
-                      {!isHepoxy && (
-                        <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>WEIGHT (GMS)</th>
-                      )}
                       <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>COST PRICE (₹)</th>
                       <th style={{ padding: '10px 14px', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)', textAlign: 'right' }}>ACTIONS</th>
                     </tr>
@@ -609,7 +678,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   <tbody>
                     {materials.length === 0 ? (
                       <tr>
-                        <td colSpan={isHepoxy ? 3 : 4} style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        <td colSpan={3} style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>
                           No materials found in {selectedCategory.name}. Click "Add Material" to create one.
                         </td>
                       </tr>
@@ -624,11 +693,6 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                             <td style={{ padding: '12px 14px', fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
                               {isHepoxy ? (mat.weight !== null ? mat.weight.toFixed(2) : mat.name) : mat.name}
                             </td>
-                            {!isHepoxy && (
-                              <td style={{ padding: '12px 14px', fontSize: 13, color: 'var(--text-primary)' }}>
-                                {mat.weight !== null ? mat.weight.toFixed(2) : '—'}
-                              </td>
-                            )}
                             <td style={{ padding: '12px 14px' }}>
                               {hasMissingPrice ? (
                                 <span
@@ -1016,6 +1080,18 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Excel Restore / Onboarding Modal */}
+      <CostingExcelRestoreModal
+        isOpen={isRestoreModalOpen}
+        onClose={() => setIsRestoreModalOpen(false)}
+        initialSection="raw_materials"
+        onRestoreSuccess={async () => {
+          await fetchCategories();
+          await fetchMaterials();
+          onMaterialsChanged?.();
+        }}
+      />
     </div>
   );
 };

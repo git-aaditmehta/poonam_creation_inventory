@@ -21,6 +21,7 @@ import {
   WifiOff,
   RefreshCw,
   IndianRupee,
+  Boxes,
 } from 'lucide-react';
 import type { User } from '../types';
 import type { SyncStatus } from '../lib/syncEngine';
@@ -32,6 +33,7 @@ export type ActiveTab =
   | 'foil'
   | 'operations'
   | 'costing'
+  | 'costing-materials'
   | 'low-stock'
   | 'history'
   | 'excel'
@@ -209,6 +211,14 @@ export const Navigation: React.FC<NavigationProps> = ({
                 >
                   <IndianRupee size={18} />
                   <span>Jewelry Costing</span>
+                </button>
+                <button
+                  className={`nav-item ${activeTab === 'costing-materials' ? 'active' : ''}`}
+                  onClick={() => handleTabClick('costing-materials')}
+                  title="Raw Materials & Categories"
+                >
+                  <Boxes size={18} />
+                  <span>Materials & Categories</span>
                 </button>
                 <button
                   className={`nav-item ${activeTab === 'low-stock' ? 'active' : ''} ${lowStockCount > 0 ? 'has-alert' : ''}`}
@@ -451,6 +461,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             {activeTab === 'foil' && 'Silver & Metal Foil'}
             {activeTab === 'operations' && 'Stock Operations'}
             {activeTab === 'costing' && 'Private Jewelry Costing'}
+            {activeTab === 'costing-materials' && 'Raw Materials & Categories'}
             {activeTab === 'low-stock' && 'Low Stock Center'}
             {activeTab === 'history' && 'Transaction History Audit'}
             {activeTab === 'excel' && 'Excel Import & Staging'}

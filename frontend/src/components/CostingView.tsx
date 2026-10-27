@@ -9,7 +9,6 @@ import {
   Download,
   Upload,
   AlertTriangle,
-  Layers,
   X,
   AlertCircle,
 } from 'lucide-react';
@@ -37,20 +36,17 @@ import {
 } from '../lib/costingEngine';
 import { CostingMaterialsView } from './CostingMaterialsView';
 import { CostingExcelRestoreModal } from './CostingExcelRestoreModal';
-import {
-  exportJewelryCostingWorkbook,
-  exportRawMaterialsWorkbook,
-} from '../lib/costingExcel';
+import { exportJewelryCostingWorkbook } from '../lib/costingExcel';
 import { useToast } from '../context/ToastContext';
 
 interface CostingViewProps {
   onExportJewelryExcel?: () => void;
-  onExportMaterialsExcel?: () => void;
+  onNavigateToMaterials?: () => void;
 }
 
 export const CostingView: React.FC<CostingViewProps> = ({
   onExportJewelryExcel,
-  onExportMaterialsExcel,
+  onNavigateToMaterials,
 }) => {
   const { showToast } = useToast();
 
@@ -379,19 +375,6 @@ export const CostingView: React.FC<CostingViewProps> = ({
     }
   };
 
-  const handleExportMaterialsExcel = async () => {
-    try {
-      const materialsByCat: Record<string, CostingMaterial[]> = {};
-      for (const cat of categories) {
-        materialsByCat[cat.id] = await getCostingMaterialsByCategory(cat.id);
-      }
-      exportRawMaterialsWorkbook(categories, materialsByCat);
-      showToast('success', 'Materials Exported', 'Raw Materials Excel backup generated locally.');
-    } catch (err: any) {
-      showToast('error', 'Export Failed', err.message);
-    }
-  };
-
   // ── Aggregates & Calculations ──────────────────────────────────
 
   const summary = useMemo(() => {
@@ -554,15 +537,6 @@ export const CostingView: React.FC<CostingViewProps> = ({
             </button>
           </div>
 
-          {/* SubTab Switch to Raw Materials */}
-          <button
-            onClick={() => setSubTab('materials')}
-            className="btn btn-secondary"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
-          >
-            <Layers size={15} /> Raw Materials & Categories
-          </button>
-
           {/* Excel Export & Restore Buttons */}
           <div style={{ display: 'flex', gap: 6 }}>
             <button
@@ -574,17 +548,9 @@ export const CostingView: React.FC<CostingViewProps> = ({
               <Download size={14} /> Costing Excel
             </button>
             <button
-              onClick={onExportMaterialsExcel || handleExportMaterialsExcel}
-              className="btn btn-secondary"
-              title="Export Raw Materials Excel"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
-            >
-              <Download size={14} /> Materials Excel
-            </button>
-            <button
               onClick={() => setIsRestoreModalOpen(true)}
               className="btn btn-secondary"
-              title="Restore / Onboard Costing Data from Excel"
+              title="Restore / Onboard Jewelry Costing Data from Excel"
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
             >
               <Upload size={14} /> Restore Excel
@@ -633,7 +599,22 @@ export const CostingView: React.FC<CostingViewProps> = ({
             Total Manufacturing Cost: <strong style={{ color: 'var(--teal-deep)', fontWeight: 800 }}>{formatRupees(summary.grandTotalCost)}</strong>
           </div>
           {summary.incompleteCount > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#D97706', fontWeight: 600 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                color: '#D97706',
+                fontWeight: 600,
+                cursor: onNavigateToMaterials ? 'pointer' : 'default',
+                padding: '2px 8px',
+                borderRadius: 4,
+                background: 'rgba(217,119,6,0.1)',
+                transition: 'background var(--transition-fast)',
+              }}
+              onClick={onNavigateToMaterials}
+              title={onNavigateToMaterials ? 'Click to open Raw Materials & Categories to update missing prices' : undefined}
+            >
               <AlertTriangle size={15} />
               <span>{summary.incompleteCount} incomplete (missing prices)</span>
             </div>
@@ -1486,6 +1467,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
         <CostingExcelRestoreModal
           isOpen={isRestoreModalOpen}
           onClose={() => setIsRestoreModalOpen(false)}
+          initialSection="jewelry_costing"
           onRestoreSuccess={loadData}
         />
       )}
