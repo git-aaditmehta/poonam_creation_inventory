@@ -18,20 +18,14 @@ const ALLOWED_ORIGINS = [
   'http://localhost:4173',
   'http://127.0.0.1:4173',
   'https://poonam-creation-inventory.vercel.app',
-  'https://poonamcreation.pages.dev',
-  'https://poonamcreation.com',
-  'https://www.poonamcreation.com',
 ];
 
-// Strict CORS: allow localhost, Vercel frontend, production domain, and preview branches
+// Strict CORS: allow localhost, Vercel frontend, and Vercel preview branches
 app.use('/api/*', cors({
   origin: (origin) => {
     if (!origin) return '';
     if (ALLOWED_ORIGINS.includes(origin)) return origin;
     if (/^https:\/\/poonam-creation-inventory(-[a-z0-9_-]+)?\.vercel\.app$/.test(origin)) {
-      return origin;
-    }
-    if (/^https:\/\/[a-z0-9-]+\.poonamcreation\.pages\.dev$/.test(origin)) {
       return origin;
     }
     return '';
