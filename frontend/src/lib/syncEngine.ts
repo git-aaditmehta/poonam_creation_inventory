@@ -142,6 +142,14 @@ class SyncEngine {
     const bootstrapDone = checkpoint !== null && totalLocalItems > 0 && sCount > 0;
     this._updateStatus({ bootstrapComplete: bootstrapDone });
 
+    // Self-healing: If local DB already bootstrapped, replay changes from seq 0
+    // so any previously failed or partial updates (like image keys seq 21/23) are cleanly applied
+    const repairDone = await localDb.getSyncState('sync_repair_v2');
+    if (!repairDone && bootstrapDone) {
+      await localDb.setSyncState('checkpoint', '0');
+      await localDb.setSyncState('sync_repair_v2', 'true');
+    }
+
     if (!bootstrapDone && navigator.onLine) {
       await this.bootstrap();
     } else if (bootstrapDone) {
@@ -398,8 +406,18 @@ class SyncEngine {
           try {
             if (change.operation === 'DELETE') {
               await localDb.exec(`DELETE FROM ${change.entity_type} WHERE id = ?`, [change.entity_id]);
+            } else if (change.operation === 'UPDATE') {
+              const payload = typeof change.payload === 'string'
+                ? JSON.parse(change.payload)
+                : change.payload;
+              // Try updating the existing row fields in SQLite first (preserves untouched columns like item_id)
+              const updated = await localDb.updateFields(change.entity_type, change.entity_id, payload);
+              if (!updated && payload.item_id) {
+                // If row didn't exist locally yet but has item_id, upsert full row
+                await localDb.upsertItem(change.entity_type, payload);
+              }
             } else {
-              // CREATE or UPDATE — upsert the record
+              // CREATE — upsert the full record
               const payload = typeof change.payload === 'string'
                 ? JSON.parse(change.payload)
                 : change.payload;

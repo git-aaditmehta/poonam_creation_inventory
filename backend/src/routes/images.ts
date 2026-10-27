@@ -79,8 +79,8 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
 
   // Verify the item exists
   const item = await c.env.DB.prepare(
-    `SELECT id, image_key, thumb_key FROM plated_jewelry WHERE id = ? AND is_deleted = 0`
-  ).bind(itemId).first<{ id: string; image_key: string | null; thumb_key: string | null }>();
+    `SELECT id, item_id, image_key, thumb_key FROM plated_jewelry WHERE id = ? AND is_deleted = 0`
+  ).bind(itemId).first<{ id: string; item_id: string; image_key: string | null; thumb_key: string | null }>();
 
   if (!item) {
     return c.json({ error: 'Plated jewelry item not found' }, 404);
@@ -106,15 +106,18 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
   });
 
   // Update D1 with R2 keys
+  const nowIso = new Date().toISOString();
   await c.env.DB.prepare(
-    `UPDATE plated_jewelry SET image_key = ?, thumb_key = ?, updated_at = datetime('now') WHERE id = ?`
-  ).bind(imageKey, thumbKey, itemId).run();
+    `UPDATE plated_jewelry SET image_key = ?, thumb_key = ?, updated_at = ? WHERE id = ?`
+  ).bind(imageKey, thumbKey, nowIso, itemId).run();
 
   // Log CDC change so syncing clients receive the new image keys
   await logSyncChange(c.env.DB, 'plated_jewelry', itemId, 'UPDATE', {
     id: itemId,
+    item_id: item.item_id,
     image_key: imageKey,
     thumb_key: thumbKey,
+    updated_at: nowIso,
   });
 
   return c.json({ success: true, image_key: imageKey, thumb_key: thumbKey });

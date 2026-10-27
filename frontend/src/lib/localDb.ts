@@ -214,6 +214,24 @@ class LocalSqlite {
     await this.exec(sql, values);
   }
 
+  /** Update specific fields on an existing item without wiping other columns. */
+  async updateFields(table: string, id: string, rawFields: Record<string, any>): Promise<boolean> {
+    const validTables = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil', 'transactions', 'pending_ops'];
+    if (!validTables.includes(table)) throw new Error(`Invalid table: ${table}`);
+
+    const item = this.sanitizeItemForTable(table, rawFields);
+    delete item.id; // Primary key should not be in SET clause
+
+    const keys = Object.keys(item);
+    if (keys.length === 0) return false;
+
+    const setClause = keys.map((k) => `${k} = ?`).join(', ');
+    const values = [...keys.map((k) => item[k]), id];
+
+    const result = await this.exec(`UPDATE ${table} SET ${setClause} WHERE id = ?`, values);
+    return (result?.changes ?? 0) > 0;
+  }
+
   /** Bulk upsert items (for bootstrap sync). */
   async bulkUpsert(table: string, items: Record<string, any>[]): Promise<void> {
     if (items.length === 0) return;

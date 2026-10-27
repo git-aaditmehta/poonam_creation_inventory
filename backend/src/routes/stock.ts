@@ -129,7 +129,7 @@ stock.post('/operate', authMiddleware, async (c) => {
 
   const nowIso = new Date().toISOString();
   const updatedItemPayload = {
-    id: item.id,
+    ...item,
     quantity: quantityAfter,
     updated_at: nowIso,
   };
