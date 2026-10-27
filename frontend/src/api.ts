@@ -36,9 +36,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     'Accept': 'application/json',
   };
 
-  const token = sessionStorage.getItem('session_token') || localStorage.getItem('session_token');
-  if (token) {
-    defaultHeaders['Authorization'] = `Bearer ${token}`;
+  // Clean up legacy session token from storage if present
+  if (sessionStorage.getItem('session_token') || localStorage.getItem('session_token')) {
+    sessionStorage.removeItem('session_token');
+    localStorage.removeItem('session_token');
   }
 
   // Only set Content-Type if not sending FormData
@@ -82,18 +83,16 @@ export const api = {
   auth: {
     bootstrap: () => request<{ success: boolean; message: string }>('/api/auth/bootstrap', { method: 'POST' }),
     login: async (identifier: string, password: string) => {
-      const res = await request<{ success: boolean; user: User; session_token?: string }>('/api/auth/login', {
+      // Clear legacy storage before authenticating
+      sessionStorage.removeItem('session_token');
+      localStorage.removeItem('session_token');
+      return await request<{ success: boolean; user: User }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({
           [identifier.includes('@') ? 'email' : 'username']: identifier,
           password,
         }),
       });
-      if (res.session_token) {
-        sessionStorage.setItem('session_token', res.session_token);
-        localStorage.setItem('session_token', res.session_token);
-      }
-      return res;
     },
     logout: async () => {
       try {

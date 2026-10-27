@@ -128,7 +128,6 @@ auth.post('/login', async (c) => {
 
   return c.json({
     user: { id: user.id, username: user.username, role: user.role },
-    session_token: rawToken,
   });
 });
 

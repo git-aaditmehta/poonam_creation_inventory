@@ -33,15 +33,10 @@ export type SyncStatusListener = (status: SyncStatus) => void;
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
 
 function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
+  return {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
   };
-  const token = sessionStorage.getItem('session_token') || localStorage.getItem('session_token');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  return headers;
 }
 
 async function apiRequest(endpoint: string, method: string, body?: any): Promise<any> {
