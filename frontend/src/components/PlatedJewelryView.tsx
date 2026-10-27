@@ -834,6 +834,16 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       {detailItem && (
         <div className="detail-overlay" onClick={() => setDetailItem(null)}>
           <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
+            {/* Floating Close Button */}
+            <button
+              onClick={() => setDetailItem(null)}
+              className="detail-close-btn"
+              aria-label="Close details"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+
             {/* Image Side */}
             <div
               className="detail-panel-image"
@@ -883,80 +893,47 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
             {/* Info Side */}
             <div className="detail-panel-info">
-              <button
-                onClick={() => setDetailItem(null)}
-                style={{
-                  alignSelf: 'flex-end',
-                  background: 'var(--bg-surface-2)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-sm)',
-                  width: 30, height: 30,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', color: 'var(--text-secondary)',
-                  marginBottom: 12,
-                }}
-              >
-                <X size={16} />
-              </button>
-
-              <h2 className="mono" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
-                {detailItem.item_id}
-              </h2>
-
-              <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-                <span className="badge badge-gold">{detailItem.unit}</span>
-                {detailItem.is_low_stock ? (
-                  <span className="badge badge-amber" style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-                    <AlertTriangle size={10} /> Low Stock
-                  </span>
-                ) : (
-                  <span className="badge badge-emerald" style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
-                    <CheckCircle2 size={10} /> In Stock
-                  </span>
-                )}
+              {/* Header: Item ID + Badges */}
+              <div className="detail-header-row">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <h2 className="mono detail-title">
+                    {detailItem.item_id}
+                  </h2>
+                  <span className="badge badge-gold">{detailItem.unit}</span>
+                  {detailItem.is_low_stock ? (
+                    <span className="badge badge-amber" style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                      <AlertTriangle size={10} /> Low Stock
+                    </span>
+                  ) : (
+                    <span className="badge badge-emerald" style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                      <CheckCircle2 size={10} /> In Stock
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Stats */}
-              <div style={{
-                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
-                marginBottom: 24,
-              }}>
-                <div style={{
-                  background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)',
-                  padding: '14px 16px',
-                }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-                    Quantity
-                  </div>
-                  <div className="mono" style={{
-                    fontSize: 20, fontWeight: 700,
+              {/* Compact Metrics Strip */}
+              <div className="detail-metrics-strip">
+                <div className="detail-metric-item">
+                  <span className="detail-metric-label">Quantity</span>
+                  <div className="mono detail-metric-value" style={{
                     color: detailItem.is_low_stock ? 'var(--amber-text)' : 'var(--text-primary)',
                   }}>
                     {detailItem.quantity}
                   </div>
                 </div>
 
-                <div style={{
-                  background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)',
-                  padding: '14px 16px',
-                }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-                    Threshold
-                  </div>
-                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>
+                <div className="detail-metric-item">
+                  <span className="detail-metric-label">Threshold</span>
+                  <div className="mono detail-metric-value" style={{ color: 'var(--text-primary)' }}>
                     {detailItem.low_stock_threshold}
                   </div>
                 </div>
 
                 {isOwner && detailItem.cost_price !== undefined && (
-                  <div style={{
-                    background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)',
-                    padding: '14px 16px', gridColumn: '1 / -1',
-                  }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-                      Cost Price
-                    </div>
-                    <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: 'var(--teal-deep)' }}>
+                  <div className="detail-metric-item">
+                    <span className="detail-metric-label">Cost Price</span>
+                    <div className="mono detail-metric-value" style={{ color: 'var(--teal-deep)' }}>
                       ₹{detailItem.cost_price.toFixed(2)}
                     </div>
                   </div>
@@ -964,7 +941,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
               </div>
 
               {/* Actions */}
-              <div style={{ marginTop: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div className="detail-actions-row">
                 {onQuickOperate && (
                   <button
                     onClick={() => {
@@ -972,7 +949,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                       onQuickOperate('plated_jewelry', detailItem);
                     }}
                     className="btn btn-primary"
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, height: 38 }}
                   >
                     <ArrowUpDown size={14} /> Adjust Stock
                   </button>
@@ -985,6 +962,8 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                         openUploadModal(detailItem);
                       }}
                       className="btn btn-secondary"
+                      style={{ height: 38, padding: '0 12px' }}
+                      title="Upload Image"
                     >
                       <Upload size={14} />
                     </button>
@@ -994,12 +973,16 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                         openEditModal(detailItem);
                       }}
                       className="btn btn-secondary"
+                      style={{ height: 38, padding: '0 12px' }}
+                      title="Edit Details"
                     >
                       <Edit2 size={14} />
                     </button>
                     <button
                       onClick={() => handleDelete(detailItem)}
                       className="btn btn-danger"
+                      style={{ height: 38, padding: '0 12px' }}
+                      title="Delete Item"
                     >
                       <Trash2 size={14} />
                     </button>
