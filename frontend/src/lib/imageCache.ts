@@ -201,7 +201,11 @@ export async function getCachedImageUrl(
   }
 
   try {
-    const response = await fetch(remoteUrl, { credentials: 'include' });
+    const token = sessionStorage.getItem('session_token') || localStorage.getItem('session_token');
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(remoteUrl, { headers, credentials: 'include' });
     if (!response.ok) return remoteUrl;
 
     const blob = await response.blob();
