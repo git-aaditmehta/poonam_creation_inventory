@@ -30,7 +30,12 @@ export type SyncStatusListener = (status: SyncStatus) => void;
 
 // ── API helpers ────────────────────────────────────────────────
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+// In production on Vercel, route through the same-origin Vercel Mumbai proxy (/api)
+const API_BASE_URL = (
+  typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
+    ? ''
+    : (import.meta.env.VITE_API_URL || '')
+).replace(/\/+$/, '');
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {

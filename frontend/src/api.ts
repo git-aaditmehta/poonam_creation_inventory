@@ -28,7 +28,12 @@ class ApiError extends Error {
   }
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+// In production on Vercel, route through the same-origin Vercel Mumbai proxy (/api)
+const API_BASE_URL = (
+  typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
+    ? ''
+    : (import.meta.env.VITE_API_URL || '')
+).replace(/\/+$/, '');
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
