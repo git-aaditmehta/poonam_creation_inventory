@@ -20,6 +20,7 @@ import { SyncQueueView } from './components/SyncQueueView';
 import { CostingView } from './components/CostingView';
 import { CostingMaterialsView } from './components/CostingMaterialsView';
 import { SyncStatusBar } from './components/SyncStatusBar';
+import { ScanJewelryView } from './components/ScanJewelryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
@@ -212,6 +213,12 @@ const AppContent: React.FC = () => {
         )}
         {activeTab === 'foil' && (
           <FoilView
+            user={currentUser}
+            onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}
+          />
+        )}
+        {activeTab === 'scan' && (
+          <ScanJewelryView
             user={currentUser}
             onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}
           />

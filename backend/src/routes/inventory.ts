@@ -279,6 +279,17 @@ function createCategoryRoutes(config: CategoryConfig) {
       if (item?.thumb_key) {
         try { await c.env.IMAGES.delete(item.thumb_key); } catch { /* ignore */ }
       }
+
+      // Purge vector embedding from Vectorize (frees vector quota immediately)
+      if (c.env.VECTORIZE) {
+        try {
+          await c.env.VECTORIZE.deleteByIds([itemId]);
+          console.log(`[Inventory Delete] Purged Vectorize embedding for ${itemId}`);
+        } catch (vErr) {
+          console.warn(`[Inventory Delete] Vectorize purge warning for ${itemId}:`, vErr);
+          // Non-fatal: vector may not exist if item was never embedded
+        }
+      }
     }
 
     const result = await c.env.DB.prepare(

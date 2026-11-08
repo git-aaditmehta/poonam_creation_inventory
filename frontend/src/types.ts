@@ -166,3 +166,77 @@ export interface ToastMessage {
   title: string;
   message?: string;
 }
+
+// Visual Search (AI Scanner) Types
+export interface VisualSearchMatch {
+  id: string;
+  item_id: string;
+  quantity: number;
+  unit: InventoryUnit;
+  low_stock_threshold: number;
+  is_low_stock: boolean;
+  image_key?: string | null;
+  thumb_key?: string | null;
+  score: number;
+  created_at: string;
+  updated_at: string;
+  cost_price?: number; // Present only for owner
+}
+
+export interface SearchTelemetry {
+  vision_ms: number;
+  embedding_ms: number;
+  total_ms: number;
+  image_bytes: number;
+  description_length: number;
+  vector_dimensions: number;
+  vision_model: string;
+  embedding_model: string;
+  vectorize_ms?: number;
+  db_ms?: number;
+  total_pipeline_ms?: number;
+  matches_found?: number;
+  matches_above_threshold?: number;
+  matches_with_db_data?: number;
+  score_threshold?: number;
+}
+
+export interface VisualSearchResponse {
+  success: boolean;
+  query_time_ms: number;
+  matches: VisualSearchMatch[];
+  ai_description?: string;
+  telemetry?: SearchTelemetry;
+  error?: string;
+  message?: string;
+  quota_exhausted?: boolean;
+}
+
+export interface VisualSearchBackfillResponse {
+  success: boolean;
+  batch_size: number;
+  embedded: number;
+  failed: number;
+  skipped: number;
+  remaining: number;
+  quota_exhausted: boolean;
+  errors: string[];
+  message?: string;
+  reset_at_utc?: string;
+}
+
+export interface VisualSearchStatusResponse {
+  success: boolean;
+  total_items: number;
+  with_images: number;
+  indexed: number;
+  coverage_percent: number;
+  remaining: number;
+  pipeline?: {
+    vision_model: string;
+    embedding_model: string;
+    vector_dimensions: number;
+    max_items_free_tier: number;
+  };
+}
+

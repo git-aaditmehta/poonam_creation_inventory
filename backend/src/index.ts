@@ -9,6 +9,7 @@ import images from './routes/images';
 import backup from './routes/backup';
 import excel from './routes/excel';
 import sync from './routes/sync';
+import visualSearch from './routes/visual-search';
 
 const app = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
@@ -48,6 +49,7 @@ app.route('/api/images', images);
 app.route('/api/backup', backup);
 app.route('/api/excel', excel);
 app.route('/api/sync', sync);
+app.route('/api/visual-search', visualSearch);
 
 // Catch-all 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

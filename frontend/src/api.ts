@@ -14,6 +14,9 @@ import type {
   PrepareDeleteResponse,
   StorageUsageResponse,
   StaffUser,
+  VisualSearchResponse,
+  VisualSearchBackfillResponse,
+  VisualSearchStatusResponse,
 } from './types';
 
 class ApiError extends Error {
@@ -284,5 +287,28 @@ export const api = {
       const base = `${API_BASE_URL}/api/images/${key}`;
       return timestamp ? `${base}?t=${encodeURIComponent(timestamp)}` : base;
     },
+  },
+
+  // Visual Search (AI Jewelry Scanner)
+  visualSearch: {
+    search: (base64Image: string) =>
+      request<VisualSearchResponse>('/api/visual-search/search', {
+        method: 'POST',
+        body: JSON.stringify({ image: base64Image }),
+      }),
+    embedItem: (id: string) =>
+      request<{ success: boolean; item_id: string; embedded_at: string }>(`/api/visual-search/embed/${id}`, {
+        method: 'POST',
+      }),
+    deleteItemEmbedding: (id: string) =>
+      request<{ success: boolean; deleted: string }>(`/api/visual-search/embed/${id}`, {
+        method: 'DELETE',
+      }),
+    backfill: () =>
+      request<VisualSearchBackfillResponse>('/api/visual-search/backfill', {
+        method: 'POST',
+      }),
+    getStatus: () =>
+      request<VisualSearchStatusResponse>('/api/visual-search/status'),
   },
 };
