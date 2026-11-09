@@ -3,56 +3,96 @@ import {
   Camera,
   RefreshCw,
   Upload,
-  Sparkles,
   Zap,
   ZapOff,
   SwitchCamera,
   AlertTriangle,
   Layers,
   ArrowUpDown,
-  ZoomIn,
   X,
-  IndianRupee,
   Package,
   WifiOff,
-  ShieldCheck,
   ChevronDown,
   ChevronUp,
   Sliders,
   RotateCcw,
-  Download,
   FileText,
+  Check,
+  Search,
+  Trash2,
+  Ban,
 } from 'lucide-react';
 import { api } from '../api';
-import type { User, VisualSearchMatch, VisualSearchStatusResponse, SearchTelemetry } from '../types';
+import { localDb } from '../lib/localDb';
+import type {
+  User,
+  VisualSearchMatch,
+  VisualSearchResponse,
+  VisualSearchStatusResponse,
+  PlatedJewelryItem,
+  ScanCategory,
+  JewelryAttributes,
+} from '../types';
 import { useToast } from '../context/ToastContext';
+import {
+  loadScanLog,
+  saveScanLog,
+  clearScanLog,
+  cosineSimilarity,
+  summarize,
+  type ScanTestRecord,
+  type ScanOutcome,
+  estimateNeurons,
+} from '../lib/scanTestLog';
+import { generateScanTestReport } from '../utils/scanReportPdf';
 
 interface ScanJewelryViewProps {
   user: User;
   onQuickOperate?: (category: 'plated_jewelry', item: any) => void;
 }
 
+const CATEGORY_CHIPS: { value: ScanCategory | null; label: string }[] = [
+  { value: null, label: 'All' },
+  { value: 'earring', label: 'Earring (ER)' },
+  { value: 'stud', label: 'Stud (PS)' },
+  { value: 'jhumka', label: 'Jhumka (JK)' },
+  { value: 'bracelet', label: 'Bracelet (BR)' },
+  { value: 'pendant_set', label: 'Pendant set (PD)' },
+];
+
+const MAX_SEND_DIM = 768; // Llama sees enough detail to count stones/bells; ~60–150 KB JPEG
+const JPEG_QUALITY = 0.82;
+
+interface PreparedImage {
+  dataUrl: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+type PickerMode = 'not_in_top6' | 'false_reject';
+
+const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickOperate }) => {
   const isOwner = user.role === 'owner';
   const { showToast } = useToast();
 
-  // Connectivity
+  // ── Connectivity ──
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
     };
   }, []);
 
-  // Camera & Stream State
+  // ── Camera ──
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
@@ -60,82 +100,76 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
   const [torchOn, setTorchOn] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  // Search State
+  // ── Search ──
+  const [category, setCategory] = useState<ScanCategory | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
-  const [matches, setMatches] = useState<VisualSearchMatch[] | null>(null);
-  const [queryTimeMs, setQueryTimeMs] = useState<number | null>(null);
+  const [response, setResponse] = useState<VisualSearchResponse | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [searchTelemetry, setSearchTelemetry] = useState<SearchTelemetry | null>(null);
-  const [aiDescription, setAiDescription] = useState<string | null>(null);
   const [quotaExhaustedMsg, setQuotaExhaustedMsg] = useState<string | null>(null);
+  const [showAttributes, setShowAttributes] = useState(false);
+  const queryVectorRef = useRef<number[] | null>(null);
 
-  // Lightbox Modal
+  // ── Test log ──
+  const [records, setRecords] = useState<ScanTestRecord[]>(() => loadScanLog());
+  const [currentRecordId, setCurrentRecordId] = useState<string | null>(null);
+  const [reasonDraft, setReasonDraft] = useState('');
+  const currentRecord = records.find((r) => r.id === currentRecordId) || null;
+  const summary = summarize(records);
+
+  // ── Correct-item picker ──
+  const [pickerMode, setPickerMode] = useState<PickerMode | null>(null);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const [pickerResults, setPickerResults] = useState<PlatedJewelryItem[]>([]);
+  const [pickerBusy, setPickerBusy] = useState(false);
+
+  // ── Lightbox ──
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
-  // Owner Backfill Manager State
-  const [showBackfillPanel, setShowBackfillPanel] = useState(false);
+  // ── Owner index panel ──
+  const [showIndexPanel, setShowIndexPanel] = useState(false);
   const [indexStatus, setIndexStatus] = useState<VisualSearchStatusResponse | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(false);
   const [isBackfilling, setIsBackfilling] = useState(false);
-  const [backfillProgress, setBackfillProgress] = useState<{
-    embeddedSoFar: number;
-    remaining: number;
-    lastBatchStatus: string;
-  } | null>(null);
+  const [backfillNote, setBackfillNote] = useState<string | null>(null);
+  const [backfillErrors, setBackfillErrors] = useState<string[]>([]);
   const stopBackfillRef = useRef(false);
 
-  // Initialize camera stream
-  const startCamera = useCallback(async (mode: 'environment' | 'user') => {
-    setCameraError(null);
-    try {
-      // Stop existing tracks first
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-      }
-
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: mode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      };
-
-      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-      setStream(newStream);
-      setCameraActive(true);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = newStream;
-        videoRef.current.play().catch((err) => {
-          console.warn('[ScanJewelry] Video play failed:', err);
+  // ═══ Camera ═══
+  const startCamera = useCallback(
+    async (mode: 'environment' | 'user') => {
+      setCameraError(null);
+      try {
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: mode, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false,
         });
+        setStream(newStream);
+        setCameraActive(true);
+        if (videoRef.current) {
+          videoRef.current.srcObject = newStream;
+          videoRef.current.play().catch(() => undefined);
+        }
+        const track = newStream.getVideoTracks()[0];
+        const caps: any = track?.getCapabilities ? track.getCapabilities() : {};
+        setHasTorch(Boolean(caps.torch));
+      } catch (err: any) {
+        setCameraActive(false);
+        let msg = 'Unable to access camera.';
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          msg = 'Camera permission denied. Please allow camera access in your browser settings.';
+        } else if (err.name === 'NotFoundError') {
+          msg = 'No camera found on this device.';
+        } else if (err.name === 'NotReadableError') {
+          msg = 'Camera is currently in use by another application.';
+        }
+        setCameraError(msg);
       }
+    },
+    [stream]
+  );
 
-      // Check torch / flashlight capability
-      const videoTrack = newStream.getVideoTracks()[0];
-      if (videoTrack) {
-        const capabilities: any = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
-        setHasTorch(Boolean(capabilities.torch));
-      }
-    } catch (err: any) {
-      console.error('[ScanJewelry] Camera access error:', err);
-      setCameraActive(false);
-      let msg = 'Unable to access camera.';
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        msg = 'Camera permission denied. Please allow camera access in your browser settings.';
-      } else if (err.name === 'NotFoundError') {
-        msg = 'No camera found on this device.';
-      } else if (err.name === 'NotReadableError') {
-        msg = 'Camera is currently in use by another application.';
-      }
-      setCameraError(msg);
-    }
-  }, [stream]);
-
-  // Stop camera stream
   const stopCamera = useCallback(() => {
     if (stream) {
       stream.getTracks().forEach((t) => t.stop());
@@ -145,1620 +179,896 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
     setTorchOn(false);
   }, [stream]);
 
-  // Start camera on mount if online, cleanup on unmount
   useEffect(() => {
-    if (isOnline) {
-      startCamera(facingMode);
-    }
-    return () => {
-      stopCamera();
-    };
+    if (isOnline) startCamera(facingMode);
+    return () => stopCamera();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Toggle front/back camera
+  // Re-attach the stream when the <video> element re-mounts (e.g. after "New scan")
+  useEffect(() => {
+    if (cameraActive && stream && videoRef.current && videoRef.current.srcObject !== stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => undefined);
+    }
+  });
+
   const handleToggleFacingMode = () => {
-    const nextMode = facingMode === 'environment' ? 'user' : 'environment';
-    setFacingMode(nextMode);
-    startCamera(nextMode);
+    const next = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(next);
+    startCamera(next);
   };
 
-  // Toggle torch / flashlight
   const handleToggleTorch = async () => {
-    if (!stream) return;
-    const track = stream.getVideoTracks()[0];
-    if (track && hasTorch) {
-      const nextTorch = !torchOn;
-      try {
-        await (track as any).applyConstraints({
-          advanced: [{ torch: nextTorch }],
-        });
-        setTorchOn(nextTorch);
-      } catch (err) {
-        console.warn('[ScanJewelry] Torch toggle failed:', err);
-      }
+    const track = stream?.getVideoTracks()[0];
+    if (!track || !hasTorch) return;
+    try {
+      await (track as any).applyConstraints({ advanced: [{ torch: !torchOn }] });
+      setTorchOn(!torchOn);
+    } catch {
+      /* torch not supported */
     }
   };
 
-  // ── Preprocessing Engine: Crop center square, fill white, scale to 224x224 JPEG ──
-  const preprocessImage = (
+  // ═══ Image preparation ═══
+  /**
+   * Camera: crop the centre square (exactly what the viewfinder shows), scale to 768.
+   * Gallery: keep the whole photo (bracelets are wide), scale longest side to 768.
+   */
+  const prepareImage = (
     source: HTMLVideoElement | HTMLImageElement,
-    sourceWidth: number,
-    sourceHeight: number
-  ): string => {
-    const canvas = canvasRef.current || document.createElement('canvas');
-    canvas.width = 224;
-    canvas.height = 224;
+    srcW: number,
+    srcH: number,
+    cropSquare: boolean
+  ): PreparedImage => {
+    let sx = 0;
+    let sy = 0;
+    let sw = srcW;
+    let sh = srcH;
+    if (cropSquare) {
+      const side = Math.min(srcW, srcH);
+      sx = (srcW - side) / 2;
+      sy = (srcH - side) / 2;
+      sw = side;
+      sh = side;
+    }
+    const scale = Math.min(1, MAX_SEND_DIM / Math.max(sw, sh));
+    const width = Math.round(sw * scale);
+    const height = Math.round(sh * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Could not get 2D canvas context');
-
-    // 1. Fill solid white background (prevents transparent PNG artifacts)
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, 224, 224);
-
-    // 2. Center-crop square from source
-    const minDim = Math.min(sourceWidth, sourceHeight);
-    const sx = (sourceWidth - minDim) / 2;
-    const sy = (sourceHeight - minDim) / 2;
-
-    // 3. Draw cropped source scaled down to 224x224
-    ctx.drawImage(source, sx, sy, minDim, minDim, 0, 0, 224, 224);
-
-    // 4. Export as clean JPEG at quality 0.85 (~15-25 KB)
-    return canvas.toDataURL('image/jpeg', 0.85);
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+    const bytes = Math.round(((dataUrl.length - dataUrl.indexOf(',') - 1) * 3) / 4);
+    return { dataUrl, width, height, bytes };
   };
 
-  // ── Execute Visual Search via Backend ──
-  const performSearch = async (base64Data: string) => {
+  // ═══ Test log helpers ═══
+  const updateRecords = (updater: (prev: ScanTestRecord[]) => ScanTestRecord[]) => {
+    setRecords((prev) => {
+      const next = updater(prev);
+      if (!saveScanLog(next)) {
+        showToast('warning', 'Not saved', 'This browser blocked saving the test log (private mode or storage full).');
+      }
+      return next;
+    });
+  };
+
+  const patchCurrent = (patch: Partial<ScanTestRecord>) => {
+    if (!currentRecordId) return;
+    updateRecords((prev) => prev.map((r) => (r.id === currentRecordId ? { ...r, ...patch } : r)));
+  };
+
+  // ═══ Search ═══
+  const performSearch = async (img: PreparedImage, source: 'camera' | 'gallery') => {
     if (!isOnline) {
-      showToast('error', 'Offline', 'Visual search requires an internet connection to run Cloudflare AI.');
+      showToast('error', 'Offline', 'Visual search needs an internet connection.');
       return;
     }
-
     setIsSearching(true);
     setSearchError(null);
     setQuotaExhaustedMsg(null);
-    setMatches(null);
-    setSearchTelemetry(null);
-    setAiDescription(null);
+    setResponse(null);
+    setPickerMode(null);
+    setReasonDraft('');
+    setShowAttributes(false);
+    queryVectorRef.current = null;
+    if (navigator.vibrate) navigator.vibrate(40);
 
-    // Mobile haptic vibration feedback
-    if (navigator.vibrate) {
-      navigator.vibrate([40, 60, 40]);
-    }
+    const base: ScanTestRecord = {
+      id: newId(),
+      n: (records[records.length - 1]?.n ?? 0) + 1,
+      ts: new Date().toISOString(),
+      source,
+      prompt_version: null,
+      category_filter: category,
+      image: { width: img.width, height: img.height, bytes: img.bytes },
+      client_round_trip_ms: null,
+      telemetry: {},
+      rejected: false,
+      ai_attributes: null,
+      embedding_text: null,
+      raw_vision_output: null,
+      matches: [],
+      top1_attributes: null,
+      filter_warning: null,
+      outcome: 'unmarked',
+      selection: null,
+      reason: '',
+      error: null,
+    };
 
+    const t0 = performance.now();
     try {
-      const res = await api.visualSearch.search(base64Data);
-      setQueryTimeMs(res.query_time_ms);
-      setMatches(res.matches || []);
-      if (res.telemetry) setSearchTelemetry(res.telemetry);
-      if (res.ai_description) setAiDescription(res.ai_description);
-
-      if (res.matches && res.matches.length > 0) {
-        showToast('success', 'Match Found', `Found ${res.matches.length} matching plated jewelry designs.`);
-      } else {
-        showToast('info', 'No Matches', 'No matching jewelry found above the similarity threshold.');
-      }
+      const res = await api.visualSearch.search(img.dataUrl, category);
+      const roundTrip = Math.round(performance.now() - t0);
+      setResponse(res);
+      queryVectorRef.current = res.query_vector || null;
+      const t = res.telemetry;
+      const record: ScanTestRecord = {
+        ...base,
+        prompt_version: res.prompt_version || null,
+        client_round_trip_ms: roundTrip,
+        telemetry: {
+          vision_ms: t?.vision_ms,
+          embedding_ms: t?.embedding_ms,
+          vectorize_ms: t?.vectorize_ms,
+          db_ms: t?.db_ms,
+          total_pipeline_ms: t?.total_pipeline_ms,
+          vision_attempts: t?.vision_attempts,
+          prompt_tokens: t?.prompt_tokens ?? null,
+          completion_tokens: t?.completion_tokens ?? null,
+        },
+        rejected: Boolean(res.rejected),
+        ai_attributes: res.ai_attributes || null,
+        embedding_text: res.embedding_text || null,
+        raw_vision_output: res.raw_vision_output || null,
+        matches: (res.matches || []).map((m, i) => ({
+          rank: i + 1,
+          id: m.id,
+          item_id: m.item_id,
+          score: m.score,
+          category: m.match_category ?? null,
+        })),
+        top1_attributes: res.matches?.[0]?.match_attributes ?? null,
+        filter_warning: res.filter_warning || null,
+      };
+      updateRecords((prev) => [...prev, record]);
+      setCurrentRecordId(record.id);
+      if (res.filter_warning) showToast('warning', 'Category filter', res.filter_warning);
     } catch (err: any) {
-      console.error('[ScanJewelry] Search error:', err);
-      const isQuota =
-        err.status === 429 ||
-        err.message?.includes('quota') ||
-        err.data?.quota_exhausted;
-
+      const roundTrip = Math.round(performance.now() - t0);
+      const isQuota = err.status === 429 || err.data?.quota_exhausted;
+      const message = isQuota ? 'Daily AI quota exhausted' : err.data?.detail || err.message || 'Visual search failed';
       if (isQuota) {
         setQuotaExhaustedMsg(
-          "Today's free AI quota has been reached. Quota resets at 00:00 UTC (05:30 AM IST). You can resume scanning tomorrow."
+          "Today's free AI quota has been reached. It resets at 00:00 UTC (05:30 AM IST)."
         );
       } else {
-        setSearchError(err.message || 'Visual search failed. Please try again.');
+        setSearchError(message);
       }
+      const t = err.data?.telemetry;
+      const record: ScanTestRecord = {
+        ...base,
+        prompt_version: t?.prompt_version || null,
+        client_round_trip_ms: roundTrip,
+        telemetry: t
+          ? {
+              vision_ms: t.vision_ms,
+              embedding_ms: t.embedding_ms,
+              vision_attempts: t.vision_attempts,
+              prompt_tokens: t.prompt_tokens ?? null,
+              completion_tokens: t.completion_tokens ?? null,
+            }
+          : {},
+        raw_vision_output: err.data?.raw_vision_output || null,
+        outcome: 'error',
+        error: `${err.status || ''} ${message}`.trim(),
+      };
+      updateRecords((prev) => [...prev, record]);
+      setCurrentRecordId(record.id);
     } finally {
       setIsSearching(false);
     }
   };
 
-  // ── Download Test Results as JSON ──
-  const handleDownloadTestResults = () => {
-    const testResults = {
-      timestamp: new Date().toISOString(),
-      device: {
-        userAgent: navigator.userAgent,
-        screen: `${window.screen.width}x${window.screen.height}`,
-        devicePixelRatio: window.devicePixelRatio,
-        online: navigator.onLine,
-        platform: navigator.platform,
-      },
-      pipeline: {
-        vision_model: searchTelemetry?.vision_model || '@cf/meta/llama-3.2-11b-vision-instruct',
-        embedding_model: searchTelemetry?.embedding_model || '@cf/baai/bge-small-en-v1.5',
-        vector_dimensions: searchTelemetry?.vector_dimensions || 384,
-      },
-      performance: {
-        vision_inference_ms: searchTelemetry?.vision_ms,
-        embedding_inference_ms: searchTelemetry?.embedding_ms,
-        vectorize_query_ms: searchTelemetry?.vectorize_ms,
-        db_lookup_ms: searchTelemetry?.db_ms,
-        total_pipeline_ms: searchTelemetry?.total_pipeline_ms,
-        total_query_time_ms: queryTimeMs,
-      },
-      input: {
-        image_bytes: searchTelemetry?.image_bytes,
-        description_length_chars: searchTelemetry?.description_length,
-      },
-      ai_generated_description: aiDescription,
-      search_quality: {
-        score_threshold: searchTelemetry?.score_threshold || 0.15,
-        total_vectors_returned: searchTelemetry?.matches_found,
-        matches_above_threshold: searchTelemetry?.matches_above_threshold,
-        matches_with_db_data: searchTelemetry?.matches_with_db_data,
-      },
-      matches: (matches || []).map((m) => ({
-        item_id: m.item_id,
-        similarity_score: m.score,
-        quantity: m.quantity,
-        unit: m.unit,
-        is_low_stock: m.is_low_stock,
-        cost_price: m.cost_price,
-      })),
-    };
-
-    const blob = new Blob([JSON.stringify(testResults, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `visual-search-test-${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    showToast('success', 'Downloaded', 'Test results JSON saved to your device.');
-  };
-
-  // Snap from live camera
   const handleCapture = () => {
-    if (!videoRef.current || !cameraActive) return;
     const video = videoRef.current;
+    if (!video || !cameraActive) return;
     if (video.videoWidth === 0 || video.videoHeight === 0) {
-      showToast('warning', 'Camera Not Ready', 'Please wait for the camera feed to stabilize.');
+      showToast('warning', 'Camera not ready', 'Please wait for the camera feed to start.');
       return;
     }
-
     try {
-      const preprocessed = preprocessImage(video, video.videoWidth, video.videoHeight);
-      setCapturedPreview(preprocessed);
-      performSearch(preprocessed);
+      const img = prepareImage(video, video.videoWidth, video.videoHeight, true);
+      setCapturedPreview(img.dataUrl);
+      performSearch(img, 'camera');
     } catch (err: any) {
-      showToast('error', 'Capture Failed', err.message);
+      showToast('error', 'Capture failed', err.message);
     }
   };
 
-  // Pick / Upload from file picker
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-
     if (!file.type.startsWith('image/')) {
-      showToast('error', 'Invalid File', 'Please select a valid image file (JPEG, PNG, WebP).');
+      showToast('error', 'Invalid file', 'Please select an image (JPEG, PNG, WebP).');
       return;
     }
-
     const reader = new FileReader();
-    reader.onload = (loadEvent) => {
-      const img = new Image();
-      img.onload = () => {
+    reader.onload = (ev) => {
+      const el = new Image();
+      el.onload = () => {
         try {
-          const preprocessed = preprocessImage(img, img.width, img.height);
-          setCapturedPreview(preprocessed);
-          performSearch(preprocessed);
+          const img = prepareImage(el, el.width, el.height, false);
+          setCapturedPreview(img.dataUrl);
+          performSearch(img, 'gallery');
         } catch (err: any) {
-          showToast('error', 'Image Processing Failed', err.message);
+          showToast('error', 'Image processing failed', err.message);
         }
       };
-      img.src = loadEvent.target?.result as string;
+      el.src = ev.target?.result as string;
     };
     reader.readAsDataURL(file);
-
-    // Reset input so re-selecting the same file triggers change
-    e.target.value = '';
   };
 
-  // Reset scan to start new capture
   const handleReset = () => {
     setCapturedPreview(null);
-    setMatches(null);
+    setResponse(null);
     setSearchError(null);
     setQuotaExhaustedMsg(null);
-    setQueryTimeMs(null);
-    setSearchTelemetry(null);
-    setAiDescription(null);
-    if (!cameraActive && isOnline) {
-      startCamera(facingMode);
+    setPickerMode(null);
+    setCurrentRecordId(null);
+    setReasonDraft('');
+    queryVectorRef.current = null;
+    if (!cameraActive && isOnline) startCamera(facingMode);
+  };
+
+  // ═══ Feedback marking ═══
+  const setOutcome = (outcome: ScanOutcome, selection: ScanTestRecord['selection']) => {
+    patchCurrent({ outcome, selection });
+    setPickerMode(null);
+  };
+
+  const handleMarkMatch = (match: VisualSearchMatch, idx: number) => {
+    if (!currentRecord) return;
+    if (currentRecord.outcome === 'found' && currentRecord.selection?.id === match.id) {
+      setOutcome('unmarked', null); // tap again = undo
+      return;
+    }
+    setOutcome('found', {
+      id: match.id,
+      item_id: match.item_id,
+      rank: idx + 1,
+      score: match.score,
+      category: match.match_category ?? null,
+      indexed: true,
+      attributes: match.match_attributes ?? null,
+      embedding_text: match.match_embedding_text ?? null,
+    });
+  };
+
+  const handleToggleSimpleOutcome = (outcome: 'true_reject' | 'false_accept') => {
+    if (!currentRecord) return;
+    setOutcome(currentRecord.outcome === outcome ? 'unmarked' : outcome, null);
+  };
+
+  // Picker search over the local catalog copy (works offline, no server cost)
+  useEffect(() => {
+    if (!pickerMode) return;
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const items = await localDb.getAllItems<PlatedJewelryItem>('plated_jewelry', pickerQuery || undefined);
+        if (!cancelled) setPickerResults(items.filter((i) => i.image_key).slice(0, 40));
+      } catch {
+        if (!cancelled) setPickerResults([]);
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [pickerMode, pickerQuery]);
+
+  const handlePickCorrectItem = async (item: PlatedJewelryItem) => {
+    if (!pickerMode) return;
+    const inResults = response?.matches.findIndex((m) => m.id === item.id) ?? -1;
+    if (inResults >= 0 && response) {
+      handleMarkMatch(response.matches[inResults], inResults);
+      return;
+    }
+    setPickerBusy(true);
+    let indexed = false;
+    let attributes: JewelryAttributes | null = null;
+    let embeddingText: string | null = null;
+    let score: number | null = null;
+    let cat: string | null = null;
+    try {
+      const d = await api.visualSearch.descriptor(item.id);
+      indexed = d.indexed;
+      attributes = d.attributes ?? null;
+      embeddingText = d.embedding_text ?? null;
+      cat = d.category ?? null;
+      if (d.values && queryVectorRef.current) score = cosineSimilarity(queryVectorRef.current, d.values);
+    } catch {
+      showToast('warning', 'Partial info', 'Could not load this item’s stored vector; saved without its score.');
+    } finally {
+      setPickerBusy(false);
+    }
+    setOutcome(pickerMode, {
+      id: item.id,
+      item_id: item.item_id,
+      rank: null,
+      score,
+      category: cat,
+      indexed,
+      attributes,
+      embedding_text: embeddingText,
+    });
+    if (!indexed) showToast('warning', 'Item not indexed', `${item.item_id} has no vector, so search could never find it.`);
+  };
+
+  const handleSaveReason = () => {
+    if (currentRecord && reasonDraft !== currentRecord.reason) patchCurrent({ reason: reasonDraft.trim() });
+  };
+
+  // ═══ Report ═══
+  const handleDownloadReport = () => {
+    if (!records.length) return;
+    try {
+      generateScanTestReport(records);
+    } catch (err: any) {
+      showToast('error', 'Report failed', err.message || 'Could not build the PDF.');
     }
   };
 
-  // ── Owner Vector Index Status & Progressive Backfill ──
+  const handleClearSession = () => {
+    if (!records.length) return;
+    if (!window.confirm(`Delete all ${records.length} test scans on this device? Download the report first if you need it.`)) return;
+    clearScanLog();
+    setRecords([]);
+    setCurrentRecordId(null);
+  };
+
+  // ═══ Owner: index status + backfill ═══
   const fetchIndexStatus = async () => {
     if (!isOwner) return;
     setIsLoadingStatus(true);
     try {
-      const res = await api.visualSearch.getStatus();
-      setIndexStatus(res);
-    } catch (err: any) {
-      console.warn('[ScanJewelry] Fetch status error:', err);
+      setIndexStatus(await api.visualSearch.getStatus());
+    } catch {
+      /* ignore */
     } finally {
       setIsLoadingStatus(false);
     }
   };
 
   useEffect(() => {
-    if (isOwner && showBackfillPanel) {
-      fetchIndexStatus();
-    }
-  }, [isOwner, showBackfillPanel]);
+    if (isOwner && showIndexPanel) fetchIndexStatus();
+  }, [isOwner, showIndexPanel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleStartBackfill = async () => {
+  const runBackfill = async () => {
     if (!isOwner || isBackfilling) return;
     setIsBackfilling(true);
     stopBackfillRef.current = false;
-    let totalEmbedded = 0;
-
-    showToast('info', 'Backfill Started', 'Generating embeddings in batches of 10 items...');
-
+    setBackfillErrors([]);
+    let total = 0;
     try {
       while (!stopBackfillRef.current) {
         const res = await api.visualSearch.backfill();
-
-        totalEmbedded += res.embedded;
-        setBackfillProgress({
-          embeddedSoFar: totalEmbedded,
-          remaining: res.remaining,
-          lastBatchStatus: `Processed batch of ${res.batch_size}: ${res.embedded} embedded, ${res.failed} failed.`,
-        });
-
-        // If quota exhausted, halt cleanly
+        total += res.embedded;
+        setBackfillNote(`${total} indexed this run · ${res.remaining} remaining`);
+        if (res.errors?.length) setBackfillErrors((prev) => [...prev, ...res.errors].slice(-8));
         if (res.quota_exhausted) {
-          showToast(
-            'warning',
-            'AI Quota Reached',
-            res.message || "Today's AI quota exhausted. Quota resets at 00:00 UTC (05:30 AM IST)."
-          );
+          showToast('warning', 'AI quota reached', res.message || 'Resets at 05:30 AM IST.');
           break;
         }
-
-        // If no more items to embed, we're done!
         if (res.remaining === 0 || res.batch_size === 0) {
-          showToast('success', 'Backfill Complete', `All items are now embedded! (${totalEmbedded} total embedded)`);
+          showToast('success', 'Indexing complete', `${total} items indexed.`);
           break;
         }
-
-        // Slight pause between batches to yield execution
-        await new Promise((r) => setTimeout(r, 600));
+        // Stop instead of looping forever on items that keep failing (would burn quota)
+        if (res.embedded === 0) {
+          showToast('warning', 'Indexing stopped', 'A whole batch failed. Check the errors below.');
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 400));
       }
     } catch (err: any) {
-      console.error('[ScanJewelry] Backfill loop error:', err);
-      showToast('error', 'Backfill Failed', err.message || 'An error occurred during batch embedding.');
+      showToast('error', 'Indexing failed', err.message || 'Error during batch embedding.');
     } finally {
       setIsBackfilling(false);
       fetchIndexStatus();
     }
   };
 
-  const handleStopBackfill = () => {
-    stopBackfillRef.current = true;
-    setIsBackfilling(false);
-    showToast('info', 'Backfill Paused', 'Batch backfill paused.');
+  const handleReindexAll = async () => {
+    if (!window.confirm('Re-index every catalog image with the current prompt? This uses AI quota for each image.')) return;
+    try {
+      const res = await api.visualSearch.reindexReset();
+      showToast('info', 'Re-index started', `${res.reset} images queued (${res.prompt_version}).`);
+      await fetchIndexStatus();
+      runBackfill();
+    } catch (err: any) {
+      showToast('error', 'Reset failed', err.message);
+    }
   };
 
-  // Helper for match confidence badge
-  const renderConfidenceBadge = (score: number) => {
-    const percent = Math.round(score * 100);
-    if (score >= 0.35) {
-      return (
-        <span
-          style={{
-            background: 'rgba(16, 185, 129, 0.12)',
-            color: '#10B981',
-            border: '1px solid rgba(16, 185, 129, 0.25)',
-            padding: '3px 8px',
-            borderRadius: '9999px',
-            fontSize: 11,
-            fontWeight: 700,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-        >
-          <Sparkles size={12} /> High Match ({percent}%)
-        </span>
-      );
+  // ═══ Render helpers ═══
+  const matches = response?.matches || [];
+  const outcomeBanner = (() => {
+    if (!currentRecord) return null;
+    const r = currentRecord;
+    switch (r.outcome) {
+      case 'found':
+        return `Saved: correct item ${r.selection?.item_id} at #${r.selection?.rank}`;
+      case 'not_in_top6':
+        return r.selection
+          ? `Saved: not in top 6 (correct: ${r.selection.item_id}${r.selection.score !== null ? `, score ${r.selection.score.toFixed(3)}` : ''})`
+          : 'Saved: not in top 6';
+      case 'false_reject':
+        return `Saved: wrongly rejected${r.selection ? ` (correct: ${r.selection.item_id})` : ''}`;
+      case 'true_reject':
+        return 'Saved: correctly rejected (not catalog jewelry)';
+      case 'false_accept':
+        return 'Saved: non-catalog object got matches';
+      case 'error':
+        return `Saved as error: ${r.error}`;
+      default:
+        return null;
     }
-    if (score >= 0.25) {
-      return (
-        <span
-          style={{
-            background: 'rgba(245, 158, 11, 0.12)',
-            color: '#F59E0B',
-            border: '1px solid rgba(245, 158, 11, 0.25)',
-            padding: '3px 8px',
-            borderRadius: '9999px',
-            fontSize: 11,
-            fontWeight: 700,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-          }}
-        >
-          🟡 Good Match ({percent}%)
-        </span>
-      );
-    }
+  })();
+
+  const attrChips = (a: JewelryAttributes | null | undefined) => {
+    if (!a) return null;
+    const entries = Object.entries(a).filter(
+      ([k, v]) => k !== 'is_jewelry' && v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0)
+    );
     return (
-      <span
-        style={{
-          background: 'rgba(58, 107, 130, 0.12)',
-          color: 'var(--teal-light)',
-          border: '1px solid rgba(58, 107, 130, 0.25)',
-          padding: '3px 8px',
-          borderRadius: '9999px',
-          fontSize: 11,
-          fontWeight: 600,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 4,
-        }}
-      >
-        🔵 Similar Design ({percent}%)
-      </span>
+      <div className="sj-chips-wrap">
+        {entries.map(([k, v]) => (
+          <span key={k} className="sj-attr">
+            <b>{k.replace(/_/g, ' ')}:</b> {Array.isArray(v) ? v.join(', ') : String(v)}
+          </span>
+        ))}
+      </div>
     );
   };
 
+  // ═══ Render ═══
   return (
-    <div style={{ padding: '20px 24px', maxWidth: 1100, margin: '0 auto' }}>
-      {/* Hidden processing canvas */}
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
-
-      {/* Header Title & Subtitle */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: 20,
-          flexWrap: 'wrap',
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 'var(--radius-md)',
-                background: 'linear-gradient(135deg, var(--teal-deep), var(--teal-light))',
-                color: '#FFFFFF',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: 'var(--shadow-sm)',
-              }}
-            >
-              <Camera size={20} />
-            </div>
-            <div>
-              <h1
-                style={{
-                  fontSize: 22,
-                  fontWeight: 700,
-                  color: 'var(--text-primary)',
-                  margin: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
-                Scan Jewelry
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    padding: '2px 8px',
-                    borderRadius: 9999,
-                    background: 'var(--teal-faint)',
-                    color: 'var(--teal-deep)',
-                    border: '1px solid var(--teal-border)',
-                  }}
-                >
-                  AI Visual Search
-                </span>
-              </h1>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '2px 0 0' }}>
-                Point camera at any plated jewelry to instantly retrieve its Item ID, stock count, and details.
-              </p>
-            </div>
-          </div>
+    <div className="sj-root">
+      {/* Header */}
+      <div className="sj-header">
+        <div className="sj-title">
+          <Camera size={20} />
+          <span>Scan Jewelry</span>
+          <span className="sj-badge">Test · {response?.prompt_version || 'v2-json'}</span>
         </div>
+        {isOwner && (
+          <button className="btn btn-secondary sj-small-btn" onClick={() => setShowIndexPanel(!showIndexPanel)}>
+            <Sliders size={14} /> Index {showIndexPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        )}
+      </div>
 
-        {/* Action Controls in Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {isOwner && (
-            <button
-              onClick={() => setShowBackfillPanel(!showBackfillPanel)}
-              className="btn btn-secondary"
-              style={{
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '7px 12px',
-              }}
-            >
-              <Sliders size={14} />
-              <span>AI Index Status</span>
-              {showBackfillPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </button>
+      {/* Test session bar */}
+      <div className="sj-session">
+        <div className="sj-session-stats">
+          <strong>{records.length}</strong> scans
+          {summary.catalogScans > 0 && (
+            <>
+              {' · '}#1 {Math.round((summary.rank1 / summary.catalogScans) * 100)}% · top 3{' '}
+              {Math.round((summary.top3 / summary.catalogScans) * 100)}%
+            </>
           )}
-
-          {capturedPreview && (
-            <button
-              onClick={handleReset}
-              className="btn btn-secondary"
-              style={{
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '7px 12px',
-              }}
-            >
-              <RotateCcw size={14} />
-              <span>New Scan</span>
-            </button>
-          )}
+          {summary.unmarked > 0 && <span className="sj-muted"> · {summary.unmarked} unmarked</span>}
+        </div>
+        <div className="sj-session-actions">
+          <button className="btn btn-secondary sj-small-btn" disabled={!records.length} onClick={handleDownloadReport}>
+            <FileText size={14} /> Report
+          </button>
+          <button className="btn btn-secondary sj-small-btn" disabled={!records.length} onClick={handleClearSession} title="Clear test session">
+            <Trash2 size={14} />
+          </button>
         </div>
       </div>
 
-      {/* Offline Warning Banner */}
       {!isOnline && (
-        <div
-          style={{
-            background: 'rgba(239, 68, 68, 0.08)',
-            border: '1px solid rgba(239, 68, 68, 0.25)',
-            borderRadius: 'var(--radius-md)',
-            padding: '12px 16px',
-            marginBottom: 20,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            color: '#B91C1C',
-          }}
-        >
-          <WifiOff size={20} style={{ flexShrink: 0 }} />
-          <div style={{ fontSize: 13 }}>
-            <strong>Visual Search requires an internet connection:</strong> Cloudflare Workers AI GPU neural network
-            runs remotely. Camera scanner is disabled until you reconnect.
-          </div>
+        <div className="sj-alert sj-alert-red">
+          <WifiOff size={18} /> Visual search needs an internet connection.
         </div>
       )}
-
-      {/* Quota Exhaustion Alert */}
       {quotaExhaustedMsg && (
-        <div
-          style={{
-            background: 'rgba(245, 158, 11, 0.10)',
-            border: '1px solid rgba(245, 158, 11, 0.30)',
-            borderRadius: 'var(--radius-md)',
-            padding: '14px 18px',
-            marginBottom: 20,
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 12,
-            color: '#92400E',
-          }}
-        >
-          <AlertTriangle size={22} style={{ flexShrink: 0, marginTop: 2, color: '#D97706' }} />
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
-              Daily Free AI Quota Reached
-            </div>
-            <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-              {quotaExhaustedMsg}
-            </div>
-          </div>
+        <div className="sj-alert sj-alert-amber">
+          <AlertTriangle size={18} /> {quotaExhaustedMsg}
         </div>
       )}
 
-      {/* Owner Backfill Manager Panel (Collapsible) */}
-      {isOwner && showBackfillPanel && (
-        <div
-          style={{
-            background: 'var(--bg-surface-1)',
-            border: '1px solid var(--border-medium)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '18px 20px',
-            marginBottom: 24,
-            boxShadow: 'var(--shadow-sm)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <ShieldCheck size={18} color="var(--accent)" />
-              <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
-                Vector Search Index Health (Owner Control)
-              </h2>
-            </div>
-            <button
-              onClick={fetchIndexStatus}
-              disabled={isLoadingStatus}
-              className="btn btn-secondary"
-              style={{ fontSize: 11, padding: '4px 8px' }}
-            >
-              <RefreshCw size={12} className={isLoadingStatus ? 'animate-spin' : ''} />
-              <span>Refresh Stats</span>
+      {/* Owner index panel */}
+      {isOwner && showIndexPanel && (
+        <div className="sj-card">
+          <div className="sj-row-between">
+            <strong>Vector index</strong>
+            <button className="btn btn-secondary sj-small-btn" onClick={fetchIndexStatus} disabled={isLoadingStatus}>
+              <RefreshCw size={12} className={isLoadingStatus ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
-
           {indexStatus ? (
-            <div>
-              {/* Stat Grid */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-                  gap: 12,
-                  marginBottom: 16,
-                }}
-              >
-                <div
-                  style={{
-                    background: 'var(--bg-surface-2)',
-                    padding: '10px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Total Plated Items</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {indexStatus.total_items}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: 'var(--bg-surface-2)',
-                    padding: '10px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Items With Photos</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>
-                    {indexStatus.with_images}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: 'var(--bg-surface-2)',
-                    padding: '10px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Indexed in Vectorize</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--emerald-text)' }}>
-                    {indexStatus.indexed}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: 'var(--bg-surface-2)',
-                    padding: '10px 14px',
-                    borderRadius: 'var(--radius-sm)',
-                  }}
-                >
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>AI Search Coverage</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)' }}>
-                    {indexStatus.coverage_percent}%
-                  </div>
-                </div>
+            <>
+              <div className="sj-stat-grid">
+                <div><span>Items</span><b>{indexStatus.total_items}</b></div>
+                <div><span>With photo</span><b>{indexStatus.with_images}</b></div>
+                <div><span>Indexed</span><b>{indexStatus.indexed}</b></div>
+                <div><span>Pending</span><b>{indexStatus.remaining}</b></div>
               </div>
-
-              {/* Progress bar */}
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Coverage Progress</span>
-                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {indexStatus.indexed} / {indexStatus.with_images} photo items indexed
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: 8,
-                    borderRadius: 9999,
-                    background: 'var(--bg-surface-3)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      height: '100%',
-                      width: `${indexStatus.coverage_percent}%`,
-                      background: 'linear-gradient(90deg, var(--teal-mid), var(--accent))',
-                      transition: 'width 0.4s ease',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Backfill Progress Note */}
-              {backfillProgress && (
-                <div
-                  style={{
-                    background: 'var(--teal-faint)',
-                    border: '1px solid var(--teal-border)',
-                    padding: '10px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: 12,
-                    marginBottom: 14,
-                    color: 'var(--teal-deep)',
-                  }}
-                >
-                  <strong>Progressive Batch Status:</strong> {backfillProgress.lastBatchStatus} (
-                  {backfillProgress.remaining} items remaining in queue)
-                </div>
+              <div className="sj-muted sj-small">Prompt: {indexStatus.pipeline?.prompt_version || '-'}</div>
+              {backfillNote && <div className="sj-small">{backfillNote}</div>}
+              {backfillErrors.length > 0 && (
+                <ul className="sj-errors">
+                  {backfillErrors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
               )}
-
-              {/* Backfill controls */}
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                {!isBackfilling ? (
-                  <button
-                    onClick={handleStartBackfill}
-                    disabled={indexStatus.remaining === 0}
-                    className="btn btn-primary"
-                    style={{
-                      fontSize: 13,
-                      padding: '8px 16px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}
-                  >
-                    <Sparkles size={16} />
-                    <span>
-                      {indexStatus.remaining === 0
-                        ? 'All Images Indexed (100%)'
-                        : `Start Progressive Backfill (${indexStatus.remaining} items)`}
-                    </span>
+              <div className="sj-btn-row">
+                {isBackfilling ? (
+                  <button className="btn btn-secondary" onClick={() => { stopBackfillRef.current = true; }}>
+                    Pause
                   </button>
                 ) : (
-                  <button
-                    onClick={handleStopBackfill}
-                    className="btn btn-secondary"
-                    style={{
-                      fontSize: 13,
-                      padding: '8px 16px',
-                      color: 'var(--rose-text)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                    }}
-                  >
-                    <RotateCcw size={16} />
-                    <span>Pause Backfill</span>
-                  </button>
+                  <>
+                    <button className="btn btn-primary" onClick={runBackfill} disabled={indexStatus.remaining === 0}>
+                      Index pending ({indexStatus.remaining})
+                    </button>
+                    <button className="btn btn-secondary" onClick={handleReindexAll}>
+                      Re-index all
+                    </button>
+                  </>
                 )}
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  Processed safely in chunks of 10 items to prevent Cloudflare CPU timeouts.
-                </span>
               </div>
-            </div>
+            </>
           ) : (
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Loading index stats...</div>
+            <div className="sj-muted sj-small">Loading…</div>
           )}
         </div>
       )}
 
-      {/* ── Viewfinder / Scanner Area ── */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: capturedPreview || matches !== null ? '1fr 1.2fr' : '1fr',
-          gap: 24,
-          alignItems: 'start',
-        }}
-      >
-        {/* Left Column: Camera Viewfinder or Preprocessed Preview */}
-        <div>
-          <div
-            style={{
-              position: 'relative',
-              width: '100%',
-              aspectRatio: '1 / 1',
-              maxWidth: 480,
-              margin: '0 auto',
-              background: '#0F172A',
-              borderRadius: 'var(--radius-xl)',
-              overflow: 'hidden',
-              boxShadow: 'var(--shadow-md)',
-              border: '2px solid var(--border-medium)',
-            }}
+      {/* Category chips */}
+      <div className="sj-chips" role="radiogroup" aria-label="Category filter">
+        {CATEGORY_CHIPS.map((c) => (
+          <button
+            key={c.label}
+            className={`sj-chip ${category === c.value ? 'active' : ''}`}
+            onClick={() => setCategory(c.value)}
+            disabled={isSearching}
           >
-            {/* Captured Preview Mode */}
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="sj-grid">
+        {/* Viewfinder column */}
+        <div>
+          <div className="sj-viewfinder">
             {capturedPreview ? (
-              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                <img
-                  src={capturedPreview}
-                  alt="Captured scan preview"
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                  }}
-                />
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 12,
-                    left: 12,
-                    background: 'rgba(0, 0, 0, 0.65)',
-                    backdropFilter: 'blur(4px)',
-                    color: '#FFFFFF',
-                    padding: '4px 10px',
-                    borderRadius: 9999,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}
-                >
-                  <Sparkles size={12} color="#D4AF37" />
-                  Preprocessed (224×224)
-                </div>
-              </div>
+              <img src={capturedPreview} alt="Scanned photo" className="sj-fill" style={{ objectFit: 'contain', background: '#000' }} />
             ) : cameraActive ? (
-              /* Live Camera Stream with Golden Reticle Overlay */
-              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-                <video
-                  ref={videoRef}
-                  playsInline
-                  autoPlay
-                  muted
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                  }}
-                />
-
-                {/* Golden Precision Reticle */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    inset: '16%',
-                    boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
-                    borderRadius: 'var(--radius-md)',
-                    pointerEvents: 'none',
-                    border: '1.5px dashed rgba(212, 175, 55, 0.4)',
-                  }}
-                >
-                  {/* Top-Left Corner */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: -2,
-                      left: -2,
-                      width: 24,
-                      height: 24,
-                      borderTop: '4px solid #D4AF37',
-                      borderLeft: '4px solid #D4AF37',
-                      borderTopLeftRadius: 'var(--radius-sm)',
-                    }}
-                  />
-                  {/* Top-Right Corner */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: -2,
-                      right: -2,
-                      width: 24,
-                      height: 24,
-                      borderTop: '4px solid #D4AF37',
-                      borderRight: '4px solid #D4AF37',
-                      borderTopRightRadius: 'var(--radius-sm)',
-                    }}
-                  />
-                  {/* Bottom-Left Corner */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: -2,
-                      left: -2,
-                      width: 24,
-                      height: 24,
-                      borderBottom: '4px solid #D4AF37',
-                      borderLeft: '4px solid #D4AF37',
-                      borderBottomLeftRadius: 'var(--radius-sm)',
-                    }}
-                  />
-                  {/* Bottom-Right Corner */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: -2,
-                      right: -2,
-                      width: 24,
-                      height: 24,
-                      borderBottom: '4px solid #D4AF37',
-                      borderRight: '4px solid #D4AF37',
-                      borderBottomRightRadius: 'var(--radius-sm)',
-                    }}
-                  />
-
-                  {/* Subtle Center Crosshairs */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: '50%',
-                      left: '50%',
-                      transform: 'translate(-50%, -50%)',
-                      width: 14,
-                      height: 14,
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 6,
-                        left: 0,
-                        right: 0,
-                        height: 2,
-                        background: 'rgba(212, 175, 55, 0.5)',
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 6,
-                        top: 0,
-                        bottom: 0,
-                        width: 2,
-                        background: 'rgba(212, 175, 55, 0.5)',
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {/* Laser Scanline Animation when Searching */}
-                {isSearching && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      inset: '16%',
-                      overflow: 'hidden',
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: '100%',
-                        height: 3,
-                        background: 'linear-gradient(90deg, transparent, #D4AF37, #FFFFFF, #D4AF37, transparent)',
-                        boxShadow: '0 0 12px 2px #D4AF37',
-                        animation: 'scanline 1.8s ease-in-out infinite alternate',
-                      }}
-                    />
-                  </div>
-                )}
-
-                {/* Guidance Text Overlay */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    bottom: 14,
-                    left: 0,
-                    right: 0,
-                    textAlign: 'center',
-                    color: 'rgba(255, 255, 255, 0.85)',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    textShadow: '0 1px 3px rgba(0,0,0,0.8)',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  Align jewelry inside the box for highest accuracy
-                </div>
-
-                {/* Camera Control Badges on Top */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 12,
-                    left: 12,
-                    right: 12,
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <div
-                    style={{
-                      background: 'rgba(0, 0, 0, 0.6)',
-                      backdropFilter: 'blur(4px)',
-                      color: '#FFFFFF',
-                      padding: '4px 10px',
-                      borderRadius: 9999,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        background: '#10B981',
-                        boxShadow: '0 0 6px #10B981',
-                      }}
-                    />
-                    Live Camera
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    {hasTorch && (
-                      <button
-                        onClick={handleToggleTorch}
-                        style={{
-                          background: torchOn ? '#D4AF37' : 'rgba(0, 0, 0, 0.6)',
-                          color: torchOn ? '#000000' : '#FFFFFF',
-                          border: 'none',
-                          borderRadius: '50%',
-                          width: 32,
-                          height: 32,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          cursor: 'pointer',
-                        }}
-                        title={torchOn ? 'Turn Flashlight Off' : 'Turn Flashlight On'}
-                      >
-                        {torchOn ? <Zap size={16} /> : <ZapOff size={16} />}
-                      </button>
-                    )}
-
-                    <button
-                      onClick={handleToggleFacingMode}
-                      style={{
-                        background: 'rgba(0, 0, 0, 0.6)',
-                        color: '#FFFFFF',
-                        border: 'none',
-                        borderRadius: '50%',
-                        width: 32,
-                        height: 32,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                      }}
-                      title="Switch Front / Rear Camera"
-                    >
-                      <SwitchCamera size={16} />
+              <>
+                <video ref={videoRef} playsInline autoPlay muted className="sj-fill" style={{ objectFit: 'cover' }} />
+                <div className="sj-reticle" />
+                <div className="sj-cam-controls">
+                  {hasTorch && (
+                    <button onClick={handleToggleTorch} className={`sj-round-btn ${torchOn ? 'on' : ''}`} aria-label="Flashlight">
+                      {torchOn ? <Zap size={18} /> : <ZapOff size={18} />}
                     </button>
-                  </div>
+                  )}
+                  <button onClick={handleToggleFacingMode} className="sj-round-btn" aria-label="Switch camera">
+                    <SwitchCamera size={18} />
+                  </button>
                 </div>
-              </div>
+              </>
             ) : (
-              /* Camera Inactive / Permission Needed / Offline View */
-              <div
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 24,
-                  textAlign: 'center',
-                  color: 'rgba(255, 255, 255, 0.7)',
-                }}
-              >
-                <Camera size={48} style={{ marginBottom: 12, opacity: 0.5 }} />
-                <div style={{ fontSize: 14, fontWeight: 600, color: '#FFFFFF', marginBottom: 6 }}>
-                  {cameraError || 'Camera is currently stopped'}
-                </div>
+              <div className="sj-cam-off">
+                <Camera size={40} />
+                <div>{cameraError || 'Camera is stopped'}</div>
                 {isOnline && (
-                  <button
-                    onClick={() => startCamera(facingMode)}
-                    className="btn btn-primary"
-                    style={{ marginTop: 12, fontSize: 13 }}
-                  >
-                    Start Camera
+                  <button className="btn btn-primary" onClick={() => startCamera(facingMode)}>
+                    Start camera
                   </button>
                 )}
               </div>
             )}
+            {isSearching && <div className="sj-scanning">Analyzing…</div>}
           </div>
 
-          {/* Viewfinder Controls & Capture Bar */}
-          <div
-            style={{
-              marginTop: 16,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 12,
-              maxWidth: 480,
-              margin: '16px auto 0',
-            }}
-          >
-            {/* Primary Action Button */}
+          <div className="sj-capture-bar">
             {!capturedPreview ? (
-              <button
-                onClick={handleCapture}
-                disabled={!cameraActive || isSearching || !isOnline}
-                style={{
-                  width: '100%',
-                  padding: '14px 24px',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'linear-gradient(135deg, var(--teal-deep), var(--teal-light))',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  fontSize: 15,
-                  fontWeight: 700,
-                  cursor: cameraActive && !isSearching && isOnline ? 'pointer' : 'not-allowed',
-                  opacity: cameraActive && !isSearching && isOnline ? 1 : 0.6,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 10,
-                  boxShadow: 'var(--shadow-sm)',
-                  transition: 'all 0.2s ease',
-                }}
-              >
-                <div
-                  style={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: '50%',
-                    border: '2px solid #FFFFFF',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: '50%',
-                      background: '#FFFFFF',
-                    }}
-                  />
-                </div>
-                <span>{isSearching ? 'Analyzing Jewelry Facets...' : 'Capture & Identify'}</span>
+              <button className="sj-capture-btn" onClick={handleCapture} disabled={!cameraActive || isSearching || !isOnline}>
+                {isSearching
+                  ? 'Analyzing…'
+                  : `Capture & identify${category ? ` · ${CATEGORY_CHIPS.find((c) => c.value === category)?.label}` : ''}`}
               </button>
             ) : (
-              <button
-                onClick={handleReset}
-                className="btn btn-secondary"
-                style={{
-                  width: '100%',
-                  padding: '12px 20px',
-                  fontSize: 14,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
-              >
-                <RotateCcw size={16} />
-                <span>Retake / Scan Another Piece</span>
+              <button className="btn btn-secondary sj-wide-btn" onClick={handleReset} disabled={isSearching}>
+                <RotateCcw size={16} /> New scan
               </button>
             )}
-
-            {/* Gallery File Upload Option */}
-            <div style={{ textAlign: 'center' }}>
-              <label
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: 'var(--teal-light)',
-                  cursor: isSearching || !isOnline ? 'not-allowed' : 'pointer',
-                  padding: '6px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--teal-faint)',
-                  border: '1px solid var(--teal-border)',
-                }}
-              >
-                <Upload size={14} />
-                <span>Or select photo from gallery / disk</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  disabled={isSearching || !isOnline}
-                  onChange={handleFileUpload}
-                  style={{ display: 'none' }}
-                />
-              </label>
-            </div>
+            <label className={`sj-upload ${isSearching || !isOnline ? 'disabled' : ''}`}>
+              <Upload size={14} /> Pick photo from gallery
+              <input type="file" accept="image/jpeg,image/png,image/webp" disabled={isSearching || !isOnline} onChange={handleFileUpload} hidden />
+            </label>
           </div>
         </div>
 
-        {/* Right Column: Search Results */}
+        {/* Results column */}
         <div>
-          {isSearching && (
-            <div
-              style={{
-                background: 'var(--bg-surface-1)',
-                border: '1px solid var(--border-medium)',
-                borderRadius: 'var(--radius-lg)',
-                padding: '40px 24px',
-                textAlign: 'center',
-                boxShadow: 'var(--shadow-sm)',
-              }}
-            >
-              <div
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: '50%',
-                  background: 'var(--teal-faint)',
-                  margin: '0 auto 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--teal-deep)',
-                }}
-              >
-                <RefreshCw size={24} className="animate-spin" />
-              </div>
-              <h3 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 6px', color: 'var(--text-primary)' }}>
-                Comparing with Vector Catalog...
-              </h3>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
-                Running OpenAI CLIP on Cloudflare Workers AI GPU and querying Vectorize index.
-              </p>
-            </div>
-          )}
-
           {searchError && (
-            <div
-              style={{
-                background: 'rgba(239, 68, 68, 0.08)',
-                border: '1px solid rgba(239, 68, 68, 0.25)',
-                borderRadius: 'var(--radius-md)',
-                padding: '16px 20px',
-                color: '#B91C1C',
-                marginBottom: 16,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <AlertTriangle size={18} />
-                <span style={{ fontSize: 14, fontWeight: 700 }}>Search Failed</span>
+            <div className="sj-alert sj-alert-red">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>Search failed.</strong> {searchError}
+                <div className="sj-small sj-muted">Saved in the test log as an error.</div>
               </div>
-              <div style={{ fontSize: 13 }}>{searchError}</div>
-              <button
-                onClick={handleReset}
-                className="btn btn-secondary"
-                style={{ marginTop: 12, fontSize: 12, padding: '5px 12px' }}
-              >
-                Try Again
-              </button>
             </div>
           )}
 
-          {/* Results List */}
-          {!isSearching && matches !== null && (
-            <div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 14,
-                }}
-              >
-                <div>
-                  <h2 style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-                    {matches.length > 0 ? `Top Matches (${matches.length})` : 'No Close Match Found'}
-                  </h2>
-                  {queryTimeMs !== null && searchTelemetry && (
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4, display: 'block', marginTop: 2 }}>
-                      Vision: {searchTelemetry.vision_ms}ms · Embed: {searchTelemetry.embedding_ms}ms · Search: {searchTelemetry.vectorize_ms || 0}ms · Total: {queryTimeMs}ms
-                    </span>
-                  )}
-                  {queryTimeMs !== null && !searchTelemetry && (
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      Completed in {queryTimeMs}ms
-                    </span>
-                  )}
-                </div>
+          {!isSearching && !response && !searchError && (
+            <div className="sj-card sj-muted sj-center">
+              Pick a category (optional), point the camera at one piece and tap <b>Capture &amp; identify</b>.
+            </div>
+          )}
 
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {searchTelemetry && (
-                    <button
-                      onClick={handleDownloadTestResults}
-                      className="btn btn-secondary"
-                      style={{ fontSize: 11, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
-                      title="Download test results JSON"
-                    >
-                      <Download size={12} />
-                      Test JSON
-                    </button>
-                  )}
-                  {matches.length > 0 && (
-                    <button
-                      onClick={handleReset}
-                      className="btn btn-secondary"
-                      style={{ fontSize: 11, padding: '4px 10px' }}
-                    >
-                      Clear Results
-                    </button>
-                  )}
-                </div>
+          {response && !isSearching && (
+            <>
+              <div className="sj-latency">
+                Total {currentRecord?.client_round_trip_ms ?? response.query_time_ms} ms · vision {response.telemetry?.vision_ms ?? '-'} ·
+                embed {response.telemetry?.embedding_ms ?? '-'} · search {response.telemetry?.vectorize_ms ?? '-'}
+                {(response.telemetry?.vision_attempts ?? 1) > 1 && ' · JSON retry'}
+                {currentRecord && estimateNeurons(currentRecord) && ` · ~${estimateNeurons(currentRecord)!.total.toFixed(1)} neurons`}
               </div>
 
-              {/* AI Description Display */}
-              {aiDescription && (
-                <div
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(212,175,55,0.08), rgba(30,30,30,0.04))',
-                    border: '1px solid rgba(212,175,55,0.25)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: '10px 14px',
-                    marginBottom: 14,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <FileText size={13} style={{ color: '#D4AF37' }} />
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#D4AF37', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                      AI Vision Description
-                    </span>
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, fontStyle: 'italic' }}>
-                    {aiDescription}
-                  </p>
+              {outcomeBanner && (
+                <div className="sj-saved">
+                  <Check size={16} /> {outcomeBanner}
                 </div>
               )}
 
-              {matches.length === 0 ? (
-                <div
-                  style={{
-                    background: 'var(--bg-surface-1)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-lg)',
-                    padding: '36px 24px',
-                    textAlign: 'center',
-                  }}
-                >
-                  <Package size={40} style={{ color: 'var(--text-muted)', marginBottom: 12 }} />
-                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                    No matching plated jewelry found
+              {/* AI attributes */}
+              <button className="sj-attr-toggle" onClick={() => setShowAttributes(!showAttributes)}>
+                AI read this photo as {showAttributes ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+              {showAttributes && (
+                <div className="sj-card sj-small">
+                  {attrChips(response.ai_attributes)}
+                  {response.embedding_text && <div className="sj-muted" style={{ marginTop: 8 }}>“{response.embedding_text}”</div>}
+                </div>
+              )}
+
+              {response.rejected ? (
+                <div className="sj-card">
+                  <div className="sj-row" style={{ color: '#B45309', fontWeight: 700 }}>
+                    <Ban size={18} /> Not recognised as jewelry
                   </div>
-                  <p
-                    style={{
-                      fontSize: 13,
-                      color: 'var(--text-secondary)',
-                      maxWidth: 420,
-                      margin: '0 auto 16px',
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    The captured item's visual score did not meet the similarity threshold (15%). Try angling the
-                    camera closer, using good lighting, or check that an image has been uploaded for this item.
-                  </p>
-                  <button onClick={handleReset} className="btn btn-primary" style={{ fontSize: 13 }}>
-                    Scan Again
+                  <p className="sj-small sj-muted">Was the AI right?</p>
+                  <div className="sj-btn-col">
+                    <button
+                      className={`btn ${currentRecord?.outcome === 'true_reject' ? 'btn-primary' : 'btn-secondary'} sj-wide-btn`}
+                      onClick={() => handleToggleSimpleOutcome('true_reject')}
+                    >
+                      Correct, it is not catalog jewelry
+                    </button>
+                    <button className="btn btn-secondary sj-wide-btn" onClick={() => setPickerMode('false_reject')}>
+                      Wrong, it is a catalog piece…
+                    </button>
+                  </div>
+                </div>
+              ) : matches.length === 0 ? (
+                <div className="sj-card sj-center">
+                  <Package size={32} className="sj-muted" />
+                  <div>No matches returned.</div>
+                  <button className="btn btn-secondary sj-wide-btn" style={{ marginTop: 10 }} onClick={() => setPickerMode('not_in_top6')}>
+                    Mark the correct item…
                   </button>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  {matches.map((item, idx) => {
-                    const imageUrl = item.image_key ? api.images.getUrl(item.image_key, item.updated_at) : '';
-                    const thumbUrl = item.thumb_key ? api.images.getUrl(item.thumb_key, item.updated_at) : imageUrl;
-
-                    return (
-                      <div
-                        key={item.id}
-                        style={{
-                          background: 'var(--bg-surface-1)',
-                          border: idx === 0 && item.score >= 0.35 ? '2px solid #D4AF37' : '1px solid var(--border-medium)',
-                          borderRadius: 'var(--radius-lg)',
-                          padding: '14px 16px',
-                          display: 'flex',
-                          gap: 16,
-                          boxShadow: 'var(--shadow-card)',
-                          position: 'relative',
-                        }}
-                      >
-                        {/* Rank Badge */}
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: -8,
-                            left: 12,
-                            background: idx === 0 ? '#D4AF37' : 'var(--teal-deep)',
-                            color: idx === 0 ? '#000000' : '#FFFFFF',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            padding: '1px 8px',
-                            borderRadius: 9999,
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
-                          }}
-                        >
-                          #{idx + 1} Best Match
-                        </div>
-
-                        {/* Thumbnail with Zoom Lightbox Click */}
-                        <div
-                          style={{
-                            position: 'relative',
-                            width: 84,
-                            height: 84,
-                            minWidth: 84,
-                            borderRadius: 'var(--radius-md)',
-                            overflow: 'hidden',
-                            background: 'var(--bg-surface-2)',
-                            border: '1px solid var(--border-subtle)',
-                            cursor: imageUrl ? 'pointer' : 'default',
-                          }}
-                          onClick={() => imageUrl && setLightboxUrl(imageUrl)}
-                          title="Click to view full photo"
-                        >
-                          {thumbUrl ? (
-                            <img
-                              src={thumbUrl}
-                              alt={item.item_id}
-                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            />
-                          ) : (
-                            <div
-                              style={{
-                                width: '100%',
-                                height: '100%',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: 'var(--text-muted)',
-                              }}
-                            >
-                              <Layers size={24} />
-                            </div>
-                          )}
-                          {imageUrl && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                bottom: 4,
-                                right: 4,
-                                background: 'rgba(0,0,0,0.6)',
-                                color: '#FFFFFF',
-                                borderRadius: '50%',
-                                width: 20,
-                                height: 20,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}
-                            >
-                              <ZoomIn size={12} />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Match Details */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'flex-start',
-                              gap: 8,
-                              marginBottom: 6,
-                            }}
-                          >
-                            <div>
-                              <div
-                                style={{
-                                  fontSize: 16,
-                                  fontWeight: 700,
-                                  color: 'var(--teal-deep)',
-                                  fontFamily: 'var(--font-mono)',
-                                }}
-                              >
-                                {item.item_id}
-                              </div>
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
-                                Plated Jewelry
-                              </div>
-                            </div>
-                            {renderConfidenceBadge(item.score)}
-                          </div>
-
-                          {/* Stock and Price details */}
-                          <div
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 16,
-                              marginTop: 8,
-                              flexWrap: 'wrap',
-                            }}
-                          >
-                            {/* Stock Quantity */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <Package size={14} color="var(--text-secondary)" />
-                              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                                {item.quantity} {item.unit}
-                              </span>
-                              {item.is_low_stock && (
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    padding: '2px 6px',
-                                    borderRadius: 4,
-                                    background: 'var(--rose-bg)',
-                                    color: 'var(--rose-text)',
-                                    border: '1px solid var(--rose-border)',
-                                  }}
-                                >
-                                  Low Stock (&lt; {item.low_stock_threshold})
-                                </span>
+                <>
+                  <div className="sj-small sj-muted" style={{ margin: '4px 0 8px' }}>Tap “This one” on the correct item:</div>
+                  <div className="sj-match-list">
+                    {matches.map((m, idx) => {
+                      const full = m.image_key ? api.images.getUrl(m.image_key, m.updated_at) : '';
+                      const thumb = m.thumb_key ? api.images.getUrl(m.thumb_key, m.updated_at) : full;
+                      const selected = currentRecord?.outcome === 'found' && currentRecord.selection?.id === m.id;
+                      return (
+                        <div key={m.id} className={`sj-match ${selected ? 'selected' : ''}`}>
+                          <div className="sj-rank">#{idx + 1}</div>
+                          <button className="sj-thumb" onClick={() => full && setLightboxUrl(full)} aria-label={`View ${m.item_id}`}>
+                            {thumb ? <img src={thumb} alt={m.item_id} /> : <Layers size={22} />}
+                          </button>
+                          <div className="sj-match-info">
+                            <div className="sj-match-id">{m.item_id}</div>
+                            <div className="sj-small sj-muted">
+                              score {m.score.toFixed(3)} · {m.quantity} {m.unit}
+                              {m.match_prompt_version && m.match_prompt_version !== response.prompt_version && (
+                                <span className="sj-stale"> · old vector ({m.match_prompt_version})</span>
                               )}
                             </div>
-
-                            {/* Cost Price: Strictly Owner Only */}
-                            {isOwner && item.cost_price !== undefined && (
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  background: 'var(--amber-bg)',
-                                  padding: '2px 8px',
-                                  borderRadius: 'var(--radius-sm)',
-                                  border: '1px solid var(--amber-border)',
-                                }}
-                                title="Confidential Cost Price (Owner Only)"
-                              >
-                                <IndianRupee size={12} color="var(--amber-text)" />
-                                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--amber-text)' }}>
-                                  ₹{item.cost_price.toFixed(2)}
-                                </span>
-                              </div>
+                            {isOwner && m.cost_price !== undefined && (
+                              <div className="sj-small sj-muted">Cost ₹{m.cost_price.toFixed(2)}</div>
                             )}
-                          </div>
-
-                          {/* 1-Click Take Stock Action Button */}
-                          <div style={{ marginTop: 12 }}>
-                            <button
-                              onClick={() => onQuickOperate?.('plated_jewelry', item)}
-                              className="btn btn-secondary"
-                              style={{
-                                fontSize: 12,
-                                padding: '6px 12px',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                fontWeight: 600,
-                                color: 'var(--teal-deep)',
-                                borderColor: 'var(--teal-border)',
-                              }}
-                            >
-                              <ArrowUpDown size={13} />
-                              <span>Take Stock Action (Add / Subtract)</span>
-                            </button>
+                            <div className="sj-match-actions">
+                              <button className={`sj-this-btn ${selected ? 'on' : ''}`} onClick={() => handleMarkMatch(m, idx)}>
+                                <Check size={14} /> {selected ? 'Selected (tap to undo)' : 'This one'}
+                              </button>
+                              {onQuickOperate && (
+                                <button className="sj-icon-btn" onClick={() => onQuickOperate('plated_jewelry', m)} title="Stock action">
+                                  <ArrowUpDown size={14} />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                  <div className="sj-btn-col" style={{ marginTop: 10 }}>
+                    <button
+                      className={`btn ${currentRecord?.outcome === 'not_in_top6' ? 'btn-primary' : 'btn-secondary'} sj-wide-btn`}
+                      onClick={() => setPickerMode('not_in_top6')}
+                    >
+                      <Search size={14} /> Not in top 6, pick the correct item…
+                    </button>
+                    <button
+                      className={`btn ${currentRecord?.outcome === 'false_accept' ? 'btn-primary' : 'btn-secondary'} sj-wide-btn`}
+                      onClick={() => handleToggleSimpleOutcome('false_accept')}
+                    >
+                      This is not a catalog item
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {/* Optional note */}
+              {currentRecord && (
+                <div className="sj-card">
+                  <label className="sj-small" htmlFor="sj-reason"><b>Note (optional)</b>, e.g. “stone is red, #1 had green”</label>
+                  <textarea
+                    id="sj-reason"
+                    className="sj-textarea"
+                    rows={2}
+                    value={reasonDraft}
+                    onChange={(e) => setReasonDraft(e.target.value)}
+                    onBlur={handleSaveReason}
+                    placeholder="Why was it wrong?"
+                  />
+                  {reasonDraft.trim() !== (currentRecord.reason || '') && (
+                    <button className="btn btn-secondary sj-small-btn" onClick={handleSaveReason}>Save note</button>
+                  )}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Empty initial state message if no scan has been initiated yet */}
-          {!isSearching && matches === null && (
-            <div
-              style={{
-                background: 'var(--bg-surface-1)',
-                border: '1px dashed var(--border-medium)',
-                borderRadius: 'var(--radius-lg)',
-                padding: '40px 24px',
-                textAlign: 'center',
-                color: 'var(--text-secondary)',
-              }}
-            >
-              <Sparkles size={36} style={{ color: '#D4AF37', marginBottom: 12 }} />
-              <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                AI Visual Recognition Ready
-              </h3>
-              <p style={{ fontSize: 13, maxWidth: 360, margin: '0 auto', lineHeight: 1.5 }}>
-                Position a piece of plated jewelry inside the camera frame and tap{' '}
-                <strong>Capture & Identify</strong> to locate matching pieces in your inventory.
-              </p>
-            </div>
+            </>
           )}
         </div>
       </div>
 
-      {/* ── High-Resolution Lightbox Modal ── */}
-      {lightboxUrl && (
-        <div
-          onClick={() => setLightboxUrl(null)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.85)',
-            backdropFilter: 'blur(6px)',
-            zIndex: 9999,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 20,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'relative',
-              maxWidth: '90vw',
-              maxHeight: '90vh',
-              background: '#000000',
-              borderRadius: 'var(--radius-lg)',
-              overflow: 'hidden',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
-            }}
-          >
-            <button
-              onClick={() => setLightboxUrl(null)}
-              style={{
-                position: 'absolute',
-                top: 12,
-                right: 12,
-                background: 'rgba(0, 0, 0, 0.6)',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: '50%',
-                width: 36,
-                height: 36,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                zIndex: 10,
-              }}
-            >
-              <X size={20} />
-            </button>
-            <img
-              src={lightboxUrl}
-              alt="High resolution preview"
-              style={{
-                maxWidth: '90vw',
-                maxHeight: '90vh',
-                objectFit: 'contain',
-                display: 'block',
-              }}
+      {/* Correct-item picker (bottom sheet) */}
+      {pickerMode && (
+        <div className="sj-sheet-backdrop" onClick={() => setPickerMode(null)}>
+          <div className="sj-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sj-row-between">
+              <strong>{pickerMode === 'false_reject' ? 'Which catalog item was it?' : 'Pick the correct item'}</strong>
+              <button className="sj-icon-btn" onClick={() => setPickerMode(null)} aria-label="Close"><X size={18} /></button>
+            </div>
+            <input
+              className="sj-input"
+              autoFocus
+              placeholder="Type item ID, e.g. PS 367"
+              value={pickerQuery}
+              onChange={(e) => setPickerQuery(e.target.value)}
             />
+            <div className="sj-picker-list">
+              {pickerResults.map((item) => {
+                const thumb = item.thumb_key ? api.images.getUrl(item.thumb_key, item.updated_at) : '';
+                return (
+                  <button key={item.id} className="sj-picker-item" disabled={pickerBusy} onClick={() => handlePickCorrectItem(item)}>
+                    {thumb ? <img src={thumb} alt="" /> : <Layers size={18} />}
+                    <span>{item.item_id}</span>
+                  </button>
+                );
+              })}
+              {pickerResults.length === 0 && <div className="sj-muted sj-small">No items with photos match.</div>}
+            </div>
+            <button
+              className="btn btn-secondary sj-wide-btn"
+              disabled={pickerBusy}
+              onClick={() => setOutcome(pickerMode, null)}
+            >
+              I don’t know the item, just mark it
+            </button>
           </div>
         </div>
       )}
 
-      {/* Laser scanline CSS keyframes */}
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div className="sj-sheet-backdrop" style={{ alignItems: 'center' }} onClick={() => setLightboxUrl(null)}>
+          <img src={lightboxUrl} alt="Catalog photo" style={{ maxWidth: '94vw', maxHeight: '88vh', objectFit: 'contain', borderRadius: 8 }} />
+        </div>
+      )}
+
       <style>{`
-        @keyframes scanline {
-          0% {
-            transform: translateY(0);
-          }
-          100% {
-            transform: translateY(calc(100% - 3px));
-          }
-        }
+        .sj-root { padding: 12px; max-width: 1100px; margin: 0 auto; box-sizing: border-box; }
+        .sj-root * { box-sizing: border-box; }
+        .sj-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .sj-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; color: var(--text-primary); min-width: 0; }
+        .sj-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--teal-faint); color: var(--teal-deep); border: 1px solid var(--teal-border); white-space: nowrap; }
+        .sj-small-btn { font-size: 12px !important; padding: 6px 10px !important; display: inline-flex; align-items: center; gap: 4px; }
+        .sj-session { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-surface-1); border: 1px solid var(--border-subtle); margin-bottom: 10px; font-size: 13px; color: var(--text-primary); }
+        .sj-session-actions { display: flex; gap: 6px; }
+        .sj-muted { color: var(--text-secondary); }
+        .sj-small { font-size: 12px; }
+        .sj-center { text-align: center; }
+        .sj-row { display: flex; align-items: center; gap: 8px; }
+        .sj-row-between { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .sj-alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); font-size: 13px; margin-bottom: 10px; }
+        .sj-alert-red { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25); color: #B91C1C; }
+        .sj-alert-amber { background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.3); color: #92400E; }
+        .sj-card { background: var(--bg-surface-1); border: 1px solid var(--border-medium); border-radius: var(--radius-lg); padding: 12px; margin-bottom: 10px; }
+        .sj-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 6px; margin-bottom: 8px; }
+        .sj-stat-grid div { background: var(--bg-surface-2); border-radius: var(--radius-sm); padding: 6px 8px; display: flex; flex-direction: column; }
+        .sj-stat-grid span { font-size: 11px; color: var(--text-secondary); }
+        .sj-stat-grid b { font-size: 16px; color: var(--text-primary); }
+        .sj-errors { margin: 6px 0; padding-left: 18px; font-size: 11px; color: #B91C1C; max-height: 120px; overflow: auto; }
+        .sj-btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        .sj-btn-col { display: flex; flex-direction: column; gap: 8px; }
+        .sj-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px; -webkit-overflow-scrolling: touch; }
+        .sj-chip { flex: 0 0 auto; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--border-medium); background: var(--bg-surface-1); color: var(--text-primary); font-size: 13px; cursor: pointer; }
+        .sj-chip.active { background: var(--teal-deep); color: #fff; border-color: var(--teal-deep); }
+        .sj-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+        @media (min-width: 900px) { .sj-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; } }
+        .sj-viewfinder { position: relative; width: 100%; max-width: 520px; margin: 0 auto; aspect-ratio: 1 / 1; background: #0F172A; border-radius: var(--radius-xl); overflow: hidden; }
+        .sj-fill { width: 100%; height: 100%; display: block; }
+        .sj-reticle { position: absolute; inset: 12%; border: 2px dashed rgba(212,175,55,.7); border-radius: var(--radius-md); box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }
+        .sj-cam-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; }
+        .sj-round-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(0,0,0,.6); color: #fff; display: flex; align-items: center; justify-content: center; }
+        .sj-round-btn.on { background: #D4AF37; color: #000; }
+        .sj-cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: rgba(255,255,255,.8); text-align: center; padding: 20px; font-size: 14px; }
+        .sj-scanning { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px; text-align: center; background: rgba(0,0,0,.6); color: #fff; font-weight: 600; font-size: 14px; }
+        .sj-capture-bar { display: flex; flex-direction: column; gap: 8px; max-width: 520px; margin: 10px auto 0; }
+        .sj-capture-btn { width: 100%; min-height: 52px; border: none; border-radius: var(--radius-md); background: linear-gradient(135deg, var(--teal-deep), var(--teal-light)); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+        .sj-capture-btn:disabled { opacity: .6; cursor: not-allowed; }
+        .sj-wide-btn { width: 100%; min-height: 44px; display: inline-flex !important; align-items: center; justify-content: center; gap: 6px; }
+        .sj-upload { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; font-size: 14px; color: var(--teal-light); background: var(--teal-faint); border: 1px solid var(--teal-border); border-radius: var(--radius-md); cursor: pointer; }
+        .sj-upload.disabled { opacity: .6; cursor: not-allowed; }
+        .sj-latency { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+        .sj-saved { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: var(--radius-md); background: rgba(16,185,129,.1); border: 1px solid rgba(16,185,129,.3); color: #047857; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+        .sj-attr-toggle { background: none; border: none; padding: 4px 0; color: var(--teal-light); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; margin-bottom: 6px; }
+        .sj-chips-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+        .sj-attr { font-size: 11px; padding: 2px 6px; border-radius: 6px; background: var(--bg-surface-2); color: var(--text-primary); }
+        .sj-match-list { display: flex; flex-direction: column; gap: 8px; }
+        .sj-match { position: relative; display: flex; gap: 10px; padding: 10px; border-radius: var(--radius-lg); border: 1px solid var(--border-medium); background: var(--bg-surface-1); }
+        .sj-match.selected { border: 2px solid #10B981; background: rgba(16,185,129,.06); }
+        .sj-rank { position: absolute; top: -8px; left: 8px; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--teal-deep); color: #fff; }
+        .sj-thumb { flex: 0 0 76px; width: 76px; height: 76px; padding: 0; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border-subtle); background: var(--bg-surface-2); display: flex; align-items: center; justify-content: center; cursor: zoom-in; }
+        .sj-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .sj-match-info { flex: 1; min-width: 0; }
+        .sj-match-id { font-family: var(--font-mono); font-weight: 700; font-size: 15px; color: var(--teal-deep); }
+        .sj-stale { color: #B45309; }
+        .sj-match-actions { display: flex; gap: 6px; margin-top: 6px; }
+        .sj-this-btn { flex: 1; min-height: 40px; border-radius: var(--radius-md); border: 1px solid #10B981; background: #fff; color: #047857; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; }
+        .sj-this-btn.on { background: #10B981; color: #fff; }
+        .sj-icon-btn { min-width: 40px; min-height: 40px; border-radius: var(--radius-md); border: 1px solid var(--border-medium); background: var(--bg-surface-1); color: var(--text-primary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+        .sj-textarea, .sj-input { width: 100%; margin: 6px 0; padding: 10px; font-size: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-medium); background: var(--bg-surface-1); color: var(--text-primary); }
+        .sj-sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 9999; display: flex; align-items: flex-end; justify-content: center; }
+        .sj-sheet { width: 100%; max-width: 560px; max-height: 85vh; display: flex; flex-direction: column; gap: 6px; background: var(--bg-surface-1); border-radius: 16px 16px 0 0; padding: 14px; }
+        .sj-picker-list { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; padding: 4px 0 8px; min-height: 120px; }
+        .sj-picker-item { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; border-radius: var(--radius-md); border: 1px solid var(--border-medium); background: var(--bg-surface-2); color: var(--text-primary); font-size: 12px; font-weight: 600; cursor: pointer; }
+        .sj-picker-item img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; }
       `}</style>
     </div>
   );

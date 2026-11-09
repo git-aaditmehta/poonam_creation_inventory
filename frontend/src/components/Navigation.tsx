@@ -476,7 +476,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             {activeTab === 'raw' && 'Raw Jewelry Casting'}
             {activeTab === 'stones' && 'Kundan Stone'}
             {activeTab === 'foil' && 'Silver & Metal Foil'}
-            {activeTab === 'scan' && 'Scan Jewelry · AI Visual Search'}
+            {activeTab === 'scan' && 'Scan Jewelry'}
             {activeTab === 'operations' && 'Stock Operations'}
             {activeTab === 'costing' && 'Private Jewelry Costing'}
             {activeTab === 'costing-materials' && 'Raw Materials & Categories'}

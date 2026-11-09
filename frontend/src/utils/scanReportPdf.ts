@@ -1,0 +1,257 @@
+/**
+ * Visual search TEST report (PDF) — testing phase only.
+ * Data-only: accuracy summary, latency, token usage and per-scan diagnostics. No photos.
+ */
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import type { JewelryAttributes } from '../types';
+import { estimateNeurons, NEURON_RATES, summarize, type LatencyStats, type ScanTestRecord } from '../lib/scanTestLog';
+
+const ATTRIBUTE_FIELDS: (keyof JewelryAttributes)[] = [
+  'category',
+  'structure',
+  'outline_shape',
+  'center_stone_color',
+  'center_stone_shape',
+  'accent_colors',
+  'enamel_color',
+  'jhumka_count',
+  'stone_layout',
+  'main_stone_type',
+  'motif',
+  'has_pearls',
+  'has_hanging_beads',
+  'has_cz_border',
+  'metal_tone',
+];
+
+const OUTCOME_LABEL: Record<ScanTestRecord['outcome'], string> = {
+  unmarked: 'Not marked',
+  found: 'Found',
+  not_in_top6: 'Not in top 6',
+  true_reject: 'Correctly rejected',
+  false_reject: 'Wrongly rejected',
+  false_accept: 'Non-catalog object matched',
+  error: 'Error',
+};
+
+const pct = (n: number, d: number) => (d > 0 ? `${n}/${d} (${Math.round((n / d) * 100)}%)` : '-');
+const ms = (v: number | null | undefined) => (typeof v === 'number' ? `${Math.round(v)} ms` : '-');
+const num = (v: number | null | undefined, digits = 3) => (typeof v === 'number' ? v.toFixed(digits) : '-');
+
+function attrValue(a: JewelryAttributes | null | undefined, key: keyof JewelryAttributes): string {
+  if (!a) return '';
+  const v = a[key];
+  if (v === undefined || v === null) return '';
+  if (Array.isArray(v)) return v.length ? v.join(', ') : '(none)';
+  return String(v);
+}
+
+function outcomeText(r: ScanTestRecord): string {
+  if (r.outcome === 'found' && r.selection?.rank) return `Found at #${r.selection.rank}`;
+  return OUTCOME_LABEL[r.outcome];
+}
+
+export function generateScanTestReport(records: ScanTestRecord[]): void {
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const margin = 36;
+  const s = summarize(records);
+  let y = margin;
+
+  const nextY = (gap = 14) => ((doc as any).lastAutoTable?.finalY ?? y) + gap;
+  const heading = (text: string, size = 13) => {
+    if (y > doc.internal.pageSize.getHeight() - 80) {
+      doc.addPage();
+      y = margin;
+    }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(size);
+    doc.text(text, margin, y);
+    y += size + 4;
+  };
+  const table = (head: string[][] | undefined, body: (string | number)[][], opts: Record<string, unknown> = {}) => {
+    autoTable(doc, {
+      startY: y,
+      head,
+      body,
+      margin: { left: margin, right: margin },
+      styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+      headStyles: { fillColor: [30, 74, 96], textColor: 255 },
+      theme: 'grid',
+      ...opts,
+    });
+    y = nextY();
+  };
+
+  // ── Title ──
+  const versions = Array.from(new Set(records.map((r) => r.prompt_version || 'unknown'))).join(', ');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text('Visual Search Test Report', margin, y);
+  y += 18;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  const first = records[0]?.ts ? new Date(records[0].ts).toLocaleString() : '-';
+  const last = records[records.length - 1]?.ts ? new Date(records[records.length - 1].ts).toLocaleString() : '-';
+  doc.text(`Generated: ${new Date().toLocaleString()}   |   Scans: ${first} to ${last}`, margin, y);
+  y += 12;
+  doc.text(`Pipeline: Llama 3.2 11B Vision (JSON) + BGE-small 384   |   Prompt version(s): ${versions}`, margin, y);
+  y += 12;
+  doc.text(`Device: ${navigator.userAgent.slice(0, 120)}`, margin, y);
+  y += 16;
+
+  // ── Accuracy ──
+  heading('1. Accuracy');
+  table(
+    [['Metric', 'Result', 'Notes']],
+    [
+      ['Total scans', s.total, `${s.marked} marked, ${s.unmarked} not marked, ${s.errors} errors`],
+      ['Catalog scans with known answer', s.catalogScans, 'Found + Not in top 6 + Wrongly rejected'],
+      ['Rank #1', pct(s.rank1, s.catalogScans), 'Correct item was the first result'],
+      ['Top 3', pct(s.top3, s.catalogScans), ''],
+      ['Top 6', pct(s.top6, s.catalogScans), ''],
+      ['Not in top 6', s.notInTop6, ''],
+      ['Wrongly rejected (real piece called not-jewelry)', s.falseReject, ''],
+      ['Correctly rejected (non-jewelry)', s.trueReject, ''],
+      ['Non-catalog object still matched', s.falseAccept, 'Should have been rejected'],
+      ['With category chip: rank #1 / top 6', `${pct(s.withChip.rank1, s.withChip.scans)} / ${pct(s.withChip.top6, s.withChip.scans)}`, ''],
+      ['Without chip: rank #1 / top 6', `${pct(s.withoutChip.rank1, s.withoutChip.scans)} / ${pct(s.withoutChip.top6, s.withoutChip.scans)}`, ''],
+    ],
+    { columnStyles: { 0: { cellWidth: 200 } } }
+  );
+
+  // ── Latency ──
+  heading('2. Latency');
+  const latRow = (label: string, l: LatencyStats) => [label, ms(l.avg), ms(l.median), ms(l.p95), ms(l.max)];
+  table(
+    [['Stage', 'Average', 'Median', 'P95', 'Max']],
+    [
+      latRow('Phone round trip (tap to results)', s.latency.roundTrip),
+      latRow('Server pipeline total', s.latency.serverTotal),
+      latRow('Vision (Llama)', s.latency.vision),
+      latRow('Embedding (BGE)', s.latency.embedding),
+      latRow('Vectorize query', s.latency.vectorize),
+    ]
+  );
+
+  // ── Diagnostics ──
+  heading('3. Diagnostics');
+  table(
+    [['Metric', 'Value']],
+    [
+      ['Avg vision prompt tokens (image + prompt)', num(s.avgPromptTokens, 0)],
+      ['Avg vision output tokens', num(s.avgCompletionTokens, 0)],
+      ['Scans that needed a JSON retry', s.retries],
+      ['Avg #1 score when #1 was correct', num(s.top1ScoreWhenCorrect)],
+      ['Avg #1 score when #1 was wrong', num(s.top1ScoreWhenWrong)],
+      ['Avg score of the correct item', num(s.avgCorrectItemScore)],
+    ],
+    { columnStyles: { 0: { cellWidth: 260 } } }
+  );
+
+  // ── AI usage (neurons) ──
+  heading('4. AI usage (neurons, estimated)');
+  const n = s.neurons;
+  table(
+    [['Metric', 'Value']],
+    [
+      ['Scans with token counts', `${n.scansWithTokens} of ${s.total}${n.scansWithoutTokens ? ` (${n.scansWithoutTokens} had no token data)` : ''}`],
+      ['Total neurons this session', num(n.total, 1)],
+      ['Share of daily free allocation (10,000)', `${(n.shareOfDailyFree * 100).toFixed(1)}%`],
+      ['Neurons per scan: average / median / max', `${num(n.avg, 1)} / ${num(n.median, 1)} / ${num(n.max, 1)}`],
+      ['Scans per day within the free allocation', n.scansPerDayFree ?? '-'],
+      [
+        'How this is calculated',
+        `Vision tokens reported by the model x published rates: input ${NEURON_RATES.visionInputPerMillion} and output ${NEURON_RATES.visionOutputPerMillion} neurons per million tokens. Embedding (${NEURON_RATES.embeddingInputPerMillion}/M) estimated from text length. Includes retries and failed scans. Re-indexing is not included. Cross-check against the Cloudflare dashboard.`,
+      ],
+    ],
+    { columnStyles: { 0: { cellWidth: 200 } } }
+  );
+
+  // ── Overview ──
+  heading('5. All scans');
+  table(
+    [['#', 'Time', 'Chip', 'Outcome', 'Correct item', 'Its score', '#1 result', '#1 score', 'Total', 'Neurons']],
+    records.map((r) => [
+      r.n,
+      new Date(r.ts).toLocaleTimeString(),
+      r.category_filter || '-',
+      outcomeText(r),
+      r.selection?.item_id || '-',
+      num(r.selection?.score),
+      r.matches[0]?.item_id || '-',
+      num(r.matches[0]?.score),
+      ms(r.client_round_trip_ms),
+      num(estimateNeurons(r)?.total, 1),
+    ])
+  );
+
+  // ── Per-scan details ──
+  doc.addPage();
+  y = margin;
+  heading('6. Scan details');
+  for (const r of records) {
+    heading(`Scan #${r.n}  -  ${outcomeText(r)}${r.category_filter ? `  -  chip: ${r.category_filter}` : ''}`, 10);
+    const info: (string | number)[][] = [
+      ['Time / source', `${new Date(r.ts).toLocaleString()} / ${r.source}`],
+      ['Image sent', `${r.image.width}x${r.image.height}, ${Math.round(r.image.bytes / 1024)} KB`],
+      [
+        'Latency',
+        `round trip ${ms(r.client_round_trip_ms)} | vision ${ms(r.telemetry.vision_ms)} | embed ${ms(r.telemetry.embedding_ms)} | vectorize ${ms(r.telemetry.vectorize_ms)} | db ${ms(r.telemetry.db_ms)}`,
+      ],
+      [
+        'Tokens / attempts',
+        `prompt ${r.telemetry.prompt_tokens ?? '-'} | output ${r.telemetry.completion_tokens ?? '-'} | vision attempts ${r.telemetry.vision_attempts ?? '-'} | neurons ${num(estimateNeurons(r)?.total, 1)}`,
+      ],
+      ['Query text (embedded)', r.embedding_text || '-'],
+    ];
+    if (r.selection) {
+      info.push([
+        'Correct item',
+        `${r.selection.item_id} | rank ${r.selection.rank ?? 'not in top 6'} | score ${num(r.selection.score)} | ${r.selection.indexed ? 'indexed' : 'NOT INDEXED'}`,
+      ]);
+      if (r.selection.embedding_text) info.push(['Correct item text', r.selection.embedding_text]);
+    }
+    if (r.reason) info.push(['Your note', r.reason]);
+    if (r.filter_warning) info.push(['Filter warning', r.filter_warning]);
+    if (r.error) info.push(['Error', r.error]);
+    if (r.error || !r.ai_attributes) info.push(['Raw vision output', (r.raw_vision_output || '-').slice(0, 600)]);
+    table(undefined, info, { columnStyles: { 0: { cellWidth: 110, fontStyle: 'bold' } } });
+
+    if (r.ai_attributes) {
+      const correct = r.selection?.attributes ?? null;
+      // Show the #1 result's attributes only when #1 was not the correct item
+      const top1 = r.matches[0] && r.matches[0].id !== r.selection?.id ? r.top1_attributes : null;
+      const head = ['Attribute', 'Phone photo (AI)', 'Correct item (catalog)'];
+      if (top1) head.push('#1 result (catalog)');
+      table(
+        [head],
+        ATTRIBUTE_FIELDS.map((f) => {
+          const row = [f, attrValue(r.ai_attributes, f), attrValue(correct, f)];
+          if (top1) row.push(attrValue(top1, f));
+          return row;
+        }),
+        {
+          didParseCell: (data: any) => {
+            // Highlight attributes where the phone photo disagrees with the correct item
+            if (data.section === 'body' && data.column.index === 2 && correct) {
+              const q = data.row.raw[1];
+              const c = data.row.raw[2];
+              if (q && c && q !== c) data.cell.styles.fillColor = [253, 226, 226];
+            }
+          },
+        }
+      );
+    }
+
+    if (r.matches.length) {
+      table(
+        [['Rank', 'Item', 'Score', 'Category', 'Correct?']],
+        r.matches.map((m) => [m.rank, m.item_id, num(m.score), m.category || '-', r.selection?.id === m.id ? 'YES' : ''])
+      );
+    }
+    y += 6;
+  }
+
+  doc.save(`visual-search-test-report-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`);
+}

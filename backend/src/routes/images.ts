@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { logSyncChange } from '../utils/syncLog';
+import { embedCatalogItem } from '../utils/jewelryVision';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -120,76 +121,24 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     updated_at: nowIso,
   });
 
-  // ── Auto-Embed: Generate embedding via Llama Vision + BGE-small pipeline ──
-  // Non-blocking: embedding failure does not prevent image upload success.
+  // ── Auto-Embed: shared v2 pipeline (Vision JSON → canonical text → BGE-small) ──
+  // Non-blocking: embedding failure does not prevent image upload success (backfill retries it).
   let embeddingStatus: 'success' | 'skipped' | 'failed' = 'skipped';
   if (c.env.AI && c.env.VECTORIZE) {
     try {
-      const visionModel = '@cf/meta/llama-3.2-11b-vision-instruct';
-      const embeddingModel = '@cf/baai/bge-small-en-v1.5';
-      const imageData = new Uint8Array(fullArrayBuffer);
-      console.log(`[AutoEmbed] Starting Vision+BGE pipeline for ${item.item_id}, image: ${imageData.length} bytes`);
-
-      // Step 1: Vision — extract structured description
-      const visionStart = Date.now();
-      const visionResult = await c.env.AI.run(visionModel, {
-        image: [...imageData],
-        prompt: `You are a jewelry catalog expert. Describe ONLY the jewelry piece in this image using these exact attributes in order:
-1. TYPE: (earring/necklace/bangle/ring/bracelet/pendant/maang-tikka/nose-pin/anklet/set)
-2. SUB-TYPE: (jhumka/stud/chandbali/hoop/drop/choker/collar/long-chain/kada/cuff)
-3. SHAPE: (round/oval/teardrop/leaf/crescent/star/floral/geometric/elongated/dome)
-4. METAL: (gold-plated/silver-plated/rose-gold/antique-gold/oxidized-silver/dual-tone)
-5. STONES: list each stone type and color (kundan/AD/CZ/pearl/emerald-green/ruby-red/sapphire-blue/crystal-clear/polki/none)
-6. STONE ARRANGEMENT: (center-mounted/border-set/clustered/scattered/dangling/layered/pavé/channel-set)
-7. DESIGN: (filigree/meenakari/temple/floral/peacock/paisley/geometric/minimalist/traditional/fusion)
-8. SIZE: (tiny/small/medium/large/oversized)
-9. SPECIAL: any visible text, watermark, code number, or unique identifying mark
-Write as one dense paragraph. Do NOT describe the background, hands, fabric, or anything except the jewelry itself.`,
-        max_tokens: 150,
-      });
-      const visionMs = Date.now() - visionStart;
-
-      const description = visionResult?.response || (typeof visionResult === 'string' ? visionResult : null);
-      if (!description || description.trim().length < 10) {
-        embeddingStatus = 'failed';
-        console.warn(`[AutoEmbed] Vision returned empty/short description for ${item.item_id} (${visionMs}ms)`);
-      } else {
-        // Step 2: BGE embedding from description
-        const embStart = Date.now();
-        const embResult = await c.env.AI.run(embeddingModel, {
-          text: [description.trim()],
-        });
-        const embMs = Date.now() - embStart;
-
-        if (embResult?.data?.[0]) {
-          await c.env.VECTORIZE.upsert([{
-            id: itemId,
-            values: embResult.data[0],
-            metadata: {
-              item_id: item.item_id,
-              image_key: imageKey,
-              description: description.trim().substring(0, 500),
-            },
-          }]);
-
-          await c.env.DB.prepare(
-            `UPDATE plated_jewelry SET embedding_generated_at = ? WHERE id = ?`
-          ).bind(nowIso, itemId).run();
-
-          embeddingStatus = 'success';
-          console.log(`[AutoEmbed] Successfully embedded ${item.item_id} (vision: ${visionMs}ms, embed: ${embMs}ms)`);
-        } else {
-          embeddingStatus = 'failed';
-          console.warn(`[AutoEmbed] BGE returned empty vector for ${item.item_id}`);
-        }
-      }
+      // Mark pending first so a failure here is picked up by backfill, not left on the old vector
+      await c.env.DB.prepare(`UPDATE plated_jewelry SET embedding_generated_at = NULL WHERE id = ?`).bind(itemId).run();
+      const result = await embedCatalogItem(
+        c.env,
+        { id: itemId, item_id: item.item_id, image_key: imageKey },
+        new Uint8Array(fullArrayBuffer)
+      );
+      embeddingStatus = result.ok ? 'success' : 'failed';
+      if (!result.ok) console.warn(`[AutoEmbed] Embedding failed for ${item.item_id} (non-fatal): ${result.error}`);
     } catch (err) {
       embeddingStatus = 'failed';
-      // Log but don't fail the upload — embedding can be retried via backfill
       console.warn(`[AutoEmbed] Embedding failed for ${item.item_id} (non-fatal):`, err);
     }
-  } else {
-    console.log(`[AutoEmbed] Skipped — AI or Vectorize binding not available (local dev without --remote?)`);
   }
 
   return c.json({ success: true, image_key: imageKey, thumb_key: thumbKey, embedding: embeddingStatus });

@@ -181,6 +181,42 @@ export interface VisualSearchMatch {
   created_at: string;
   updated_at: string;
   cost_price?: number; // Present only for owner
+  // Test diagnostics (v2 pipeline)
+  match_category?: string | null;
+  match_prompt_version?: string;
+  match_embedding_text?: string | null;
+  match_attributes?: JewelryAttributes | null;
+}
+
+export type ScanCategory = 'earring' | 'stud' | 'jhumka' | 'bracelet' | 'pendant_set';
+
+export interface JewelryAttributes {
+  is_jewelry: boolean;
+  category?: string;
+  structure?: string;
+  outline_shape?: string;
+  metal_tone?: string;
+  main_stone_type?: string;
+  center_stone_color?: string;
+  center_stone_shape?: string;
+  accent_colors?: string[];
+  enamel_color?: string;
+  stone_layout?: string;
+  motif?: string;
+  jhumka_count?: number;
+  has_pearls?: boolean;
+  has_hanging_beads?: boolean;
+  has_cz_border?: boolean;
+}
+
+export interface VisualSearchDescriptor {
+  success: boolean;
+  indexed: boolean;
+  category?: string | null;
+  prompt_version?: string;
+  embedding_text?: string | null;
+  attributes?: JewelryAttributes | null;
+  values?: number[];
 }
 
 export interface SearchTelemetry {
@@ -199,6 +235,10 @@ export interface SearchTelemetry {
   matches_above_threshold?: number;
   matches_with_db_data?: number;
   score_threshold?: number;
+  vision_attempts?: number;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  prompt_version?: string;
 }
 
 export interface VisualSearchResponse {
@@ -210,6 +250,15 @@ export interface VisualSearchResponse {
   error?: string;
   message?: string;
   quota_exhausted?: boolean;
+  prompt_version?: string;
+  category_filter?: ScanCategory | null;
+  ai_attributes?: JewelryAttributes | null;
+  embedding_text?: string | null;
+  raw_vision_output?: string | null;
+  rejected?: boolean;
+  rejection_reason?: string;
+  filter_warning?: string | null;
+  query_vector?: number[];
 }
 
 export interface VisualSearchBackfillResponse {
@@ -237,6 +286,7 @@ export interface VisualSearchStatusResponse {
     embedding_model: string;
     vector_dimensions: number;
     max_items_free_tier: number;
+    prompt_version?: string;
   };
 }
 

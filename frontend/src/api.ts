@@ -17,6 +17,8 @@ import type {
   VisualSearchResponse,
   VisualSearchBackfillResponse,
   VisualSearchStatusResponse,
+  VisualSearchDescriptor,
+  ScanCategory,
 } from './types';
 
 class ApiError extends Error {
@@ -291,10 +293,16 @@ export const api = {
 
   // Visual Search (AI Jewelry Scanner)
   visualSearch: {
-    search: (base64Image: string) =>
+    search: (base64Image: string, category?: ScanCategory | null) =>
       request<VisualSearchResponse>('/api/visual-search/search', {
         method: 'POST',
-        body: JSON.stringify({ image: base64Image }),
+        body: JSON.stringify(category ? { image: base64Image, category } : { image: base64Image }),
+      }),
+    descriptor: (id: string) =>
+      request<VisualSearchDescriptor>(`/api/visual-search/descriptor/${encodeURIComponent(id)}`),
+    reindexReset: () =>
+      request<{ success: boolean; reset: number; prompt_version: string }>('/api/visual-search/reindex-reset', {
+        method: 'POST',
       }),
     embedItem: (id: string) =>
       request<{ success: boolean; item_id: string; embedded_at: string }>(`/api/visual-search/embed/${id}`, {
