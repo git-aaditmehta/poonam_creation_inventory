@@ -26,6 +26,8 @@ import {
   PROMPT_VERSION,
   VECTOR_DIMENSIONS,
   VISION_MODEL,
+  EARRING_COMPONENT_SUFFIX,
+  parentIdOf,
   type JewelryCategory,
 } from '../utils/jewelryVision';
 
@@ -190,6 +192,8 @@ visualSearch.post('/search', authMiddleware, async (c) => {
       const attr = candAttrs ? scoreAttributes(queryAttrs, candAttrs, { categoryCertain: Boolean(categoryFilter) }) : null;
       return {
         ...m,
+        item_uuid: parentIdOf(m.id), // `<uuid>#earring` vectors belong to their pendant set
+        component: m.metadata?.component ?? null,
         cosine: m.score,
         attr_score: attr?.score ?? null,
         breakdown: attr?.breakdown ?? null,
@@ -197,14 +201,21 @@ visualSearch.post('/search', authMiddleware, async (c) => {
       };
     })
     .sort((a, b) => b.final - a.final);
-  const qualifiedMatches = ranked.slice(0, RESULT_COUNT);
-  const uncertain = ranked.length >= 2 && ranked[0].final - ranked[1].final < CLOSE_CALL_MARGIN;
+  // One row per catalog item: a set matched by both its pendant and its earrings keeps the better one
+  const seenItems = new Set<string>();
+  const perItem = ranked.filter((m) => {
+    if (seenItems.has(m.item_uuid)) return false;
+    seenItems.add(m.item_uuid);
+    return true;
+  });
+  const qualifiedMatches = perItem.slice(0, RESULT_COUNT);
+  const uncertain = perItem.length >= 2 && perItem[0].final - perItem[1].final < CLOSE_CALL_MARGIN;
 
   // Step 6: Fetch live inventory details from D1
   let dbResults: any[] = [];
   let dbMs = 0;
   if (qualifiedMatches.length > 0) {
-    const ids = qualifiedMatches.map((m) => m.id);
+    const ids = qualifiedMatches.map((m) => m.item_uuid);
     const placeholders = ids.map(() => '?').join(',');
     const dbStart = Date.now();
     try {
@@ -225,9 +236,9 @@ visualSearch.post('/search', authMiddleware, async (c) => {
   // Step 7: Merge, preserving rank order
   const itemMap = new Map(dbResults.map((r: any) => [r.id, r]));
   const matches = qualifiedMatches
-    .filter((m) => itemMap.has(m.id))
+    .filter((m) => itemMap.has(m.item_uuid))
     .map((m) => {
-      const item = itemMap.get(m.id);
+      const item = itemMap.get(m.item_uuid);
       const match: Record<string, unknown> = {
         id: item.id,
         item_id: item.item_id,
@@ -241,6 +252,7 @@ visualSearch.post('/search', authMiddleware, async (c) => {
         match_cosine: m.cosine,
         match_attr_score: m.attr_score,
         match_breakdown: m.breakdown,
+        match_component: m.component,
         created_at: item.created_at,
         updated_at: item.updated_at,
         // Diagnostics for the test report
@@ -275,7 +287,7 @@ visualSearch.post('/search', authMiddleware, async (c) => {
     query_time_ms: totalMs,
     matches,
     rank_version: RANK_VERSION,
-    candidates_considered: ranked.length,
+    candidates_considered: perItem.length,
     uncertain,
     ai_category_guess: guess,
     category_hint_warning: categoryHintWarning,
@@ -287,7 +299,7 @@ visualSearch.post('/search', authMiddleware, async (c) => {
       db_ms: dbMs,
       total_pipeline_ms: totalMs,
       matches_found: rawMatches.length,
-      matches_above_threshold: ranked.length,
+      matches_above_threshold: perItem.length,
       matches_with_db_data: matches.length,
       score_threshold: MIN_SCORE_THRESHOLD,
     },
@@ -338,34 +350,38 @@ visualSearch.post('/descriptor/:id', authMiddleware, async (c) => {
     return c.json({ error: `vector must be ${VECTOR_DIMENSIONS} finite numbers` }, 400);
   }
   try {
-    const vectors = await c.env.VECTORIZE.getByIds([id]);
-    const vec = vectors?.[0];
-    if (!vec) return c.json({ success: true, indexed: false });
-    const values: number[] = Array.from(vec.values as ArrayLike<number>);
-    let dot = 0;
-    let na = 0;
-    let nb = 0;
-    for (let i = 0; i < values.length; i++) {
-      dot += values[i] * (qv[i] as number);
-      na += values[i] * values[i];
-      nb += (qv[i] as number) * (qv[i] as number);
-    }
-    const cosine = na > 0 && nb > 0 ? dot / Math.sqrt(na * nb) : 0;
-    const candAttrs = attributesFromMetadata(vec.metadata);
+    const vectors: any[] = (await c.env.VECTORIZE.getByIds([id, `${id}${EARRING_COMPONENT_SUFFIX}`])) || [];
+    if (!vectors.length) return c.json({ success: true, indexed: false });
     const queryAttrs = body?.attributes && typeof body.attributes === 'object' ? body.attributes : null;
-    const attr = candAttrs && queryAttrs ? scoreAttributes(queryAttrs, candAttrs, { categoryCertain: Boolean(body?.category_filter) }) : null;
+    const scored = vectors.map((vec) => {
+      const values: number[] = Array.from(vec.values as ArrayLike<number>);
+      let dot = 0;
+      let na = 0;
+      let nb = 0;
+      for (let i = 0; i < values.length; i++) {
+        dot += values[i] * (qv[i] as number);
+        na += values[i] * values[i];
+        nb += (qv[i] as number) * (qv[i] as number);
+      }
+      const cosine = na > 0 && nb > 0 ? dot / Math.sqrt(na * nb) : 0;
+      const candAttrs = attributesFromMetadata(vec.metadata);
+      const attr = candAttrs && queryAttrs ? scoreAttributes(queryAttrs, candAttrs, { categoryCertain: Boolean(body?.category_filter) }) : null;
+      return { vec, values, cosine, candAttrs, attr, final: finalScore(cosine, attr?.score ?? null) };
+    });
+    const best = scored.sort((a, b) => b.final - a.final)[0];
     return c.json({
       success: true,
       indexed: true,
-      category: vec.metadata?.category ?? null,
-      prompt_version: vec.metadata?.prompt_version ?? 'v1',
-      embedding_text: vec.metadata?.embed_text ?? null,
-      attributes: candAttrs,
-      values: values.map(round),
-      cosine: round(cosine),
-      attr_score: attr?.score ?? null,
-      breakdown: attr?.breakdown ?? null,
-      score: round(finalScore(cosine, attr?.score ?? null)),
+      category: best.vec.metadata?.category ?? null,
+      component: best.vec.metadata?.component ?? null,
+      prompt_version: best.vec.metadata?.prompt_version ?? 'v1',
+      embedding_text: best.vec.metadata?.embed_text ?? null,
+      attributes: best.candAttrs,
+      values: best.values.map(round),
+      cosine: round(best.cosine),
+      attr_score: best.attr?.score ?? null,
+      breakdown: best.attr?.breakdown ?? null,
+      score: round(best.final),
     });
   } catch (err) {
     return c.json({ error: 'Failed to read vector', detail: err instanceof Error ? err.message : 'Unknown error' }, 500);
@@ -414,7 +430,7 @@ visualSearch.delete('/embed/:id', authMiddleware, ownerOnly, async (c) => {
   const itemId = c.req.param('id');
   if (c.env.VECTORIZE) {
     try {
-      await c.env.VECTORIZE.deleteByIds([itemId]);
+      await c.env.VECTORIZE.deleteByIds([itemId, `${itemId}${EARRING_COMPONENT_SUFFIX}`]);
     } catch (err) {
       console.warn(`[VisualSearch] Vectorize delete warning for ${itemId}:`, err);
     }

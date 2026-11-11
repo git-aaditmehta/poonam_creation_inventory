@@ -11,7 +11,7 @@
  */
 import type { JewelryAttributes } from './jewelryVision';
 
-export const RANK_VERSION = 'rank-v1';
+export const RANK_VERSION = 'rank-v2';
 
 /** Cosine is compressed into ~0.95–1.0 for same-category items; stretch it before mixing. */
 const COSINE_FLOOR = 0.8;
@@ -66,6 +66,16 @@ function countMatch(a: number | undefined, b: number | undefined): number | null
   if (diff === 1) return 0.7; // the model miscounts by one often (5 vs 6 bells)
   if (diff === 2) return 0.3;
   return 0;
+}
+
+/** For larger counts (stones, segments, drops): relative tolerance instead of ±1. */
+function countMatchRelative(a: number | undefined, b: number | undefined): number | null {
+  if (a === undefined || b === undefined) return null;
+  if (a === b) return 1;
+  const diff = Math.abs(a - b);
+  if (diff === 1) return 0.8;
+  const rel = diff / Math.max(a, b, 1);
+  return Math.max(0, 1 - rel * 1.5);
 }
 
 function setMatch(a: string[] | undefined, b: string[] | undefined): number | null {
@@ -129,6 +139,32 @@ export function scoreAttributes(q: JewelryAttributes, cand: JewelryAttributes, o
     ['motif', 0.5, enumMatch(q.motif, cand.motif)], // flips often (floral vs none)
     ['main_stone_type', 0.5, enumMatch(q.main_stone_type, cand.main_stone_type)],
     ['metal_tone', 0.5, enumMatch(q.metal_tone, cand.metal_tone)],
+    // ── v3 category-specific fields (skipped automatically when either side lacks them) ──
+    // bracelet
+    ['band_type', 2.5, enumMatch(q.band_type, cand.band_type)],
+    ['band_width', 1.5, enumMatch(q.band_width, cand.band_width, { thin: ['medium'], medium: ['thin', 'wide'], wide: ['medium'] })],
+    ['row_count', 1.5, countMatch(q.row_count, cand.row_count)],
+    ['segment_shape', 1.5, enumMatch(q.segment_shape, cand.segment_shape, SHAPE_NEIGHBOURS)],
+    ['segment_count', 1.0, countMatchRelative(q.segment_count, cand.segment_count)],
+    ['stone_size', 1.0, enumMatch(q.stone_size, cand.stone_size, { small: ['medium'], medium: ['small', 'large'], large: ['medium'] })],
+    ['spacing', 1.0, enumMatch(q.spacing, cand.spacing)],
+    // jhumka
+    ['dome_pattern', 2.0, enumMatch(q.dome_pattern, cand.dome_pattern)],
+    ['rim_style', 1.5, enumMatch(q.rim_style, cand.rim_style, { beaded: ['hanging_beads'], hanging_beads: ['beaded', 'pearls'], pearls: ['hanging_beads'] })],
+    ['dome_size', 1.0, enumMatch(q.dome_size, cand.dome_size, { small: ['medium'], medium: ['small', 'large'], large: ['medium'] })],
+    ['cap_style', 1.0, enumMatch(q.cap_style, cand.cap_style)],
+    // stud
+    ['border_style', 1.5, enumMatch(q.border_style, cand.border_style)],
+    ['surround_count', 1.5, countMatchRelative(q.surround_count, cand.surround_count)],
+    ['stone_count', 1.0, countMatchRelative(q.stone_count, cand.stone_count)],
+    // earring
+    ['tier_count', 1.5, countMatch(q.tier_count, cand.tier_count)],
+    ['top_motif', 1.5, enumMatch(q.top_motif, cand.top_motif)],
+    ['has_crescent', 1.5, boolMatch(q.has_crescent, cand.has_crescent)],
+    ['drop_type', 1.5, enumMatch(q.drop_type, cand.drop_type, { beads: ['pearls', 'stones'], pearls: ['beads'], stones: ['beads'] })],
+    ['drop_count', 1.0, countMatchRelative(q.drop_count, cand.drop_count)],
+    // pendant set
+    ['has_chain', 0.5, boolMatch(q.has_chain, cand.has_chain)],
   ];
 
   const breakdown: Record<string, FieldScore> = {};

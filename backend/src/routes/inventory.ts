@@ -283,7 +283,7 @@ function createCategoryRoutes(config: CategoryConfig) {
       // Purge vector embedding from Vectorize (frees vector quota immediately)
       if (c.env.VECTORIZE) {
         try {
-          await c.env.VECTORIZE.deleteByIds([itemId]);
+          await c.env.VECTORIZE.deleteByIds([itemId, `${itemId}#earring`]); // pendant sets also have an earring vector
           console.log(`[Inventory Delete] Purged Vectorize embedding for ${itemId}`);
         } catch (vErr) {
           console.warn(`[Inventory Delete] Vectorize purge warning for ${itemId}:`, vErr);

@@ -189,6 +189,8 @@ export interface VisualSearchMatch {
   /** Re-ranking parts: `score` is the final mix; these are its components (null for old v1 vectors). */
   match_cosine?: number;
   match_attr_score?: number | null;
+  /** 'earring' when a pendant set was matched through its matching-earrings vector. */
+  match_component?: string | null;
   match_breakdown?: Record<string, { weight: number; match: number }> | null;
 }
 
@@ -211,6 +213,28 @@ export interface JewelryAttributes {
   has_pearls?: boolean;
   has_hanging_beads?: boolean;
   has_cz_border?: boolean;
+  // v3 category-specific fields
+  band_type?: string;
+  band_width?: string;
+  row_count?: number;
+  segment_shape?: string;
+  segment_count?: number;
+  stone_size?: string;
+  spacing?: string;
+  dome_pattern?: string;
+  rim_style?: string;
+  dome_size?: string;
+  cap_style?: string;
+  border_style?: string;
+  surround_count?: number;
+  stone_count?: number;
+  tier_count?: number;
+  top_motif?: string;
+  has_crescent?: boolean;
+  drop_type?: string;
+  drop_count?: number;
+  has_chain?: boolean;
+  matching_earrings?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface VisualSearchDescriptor {

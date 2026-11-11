@@ -39,12 +39,33 @@ const pct = (n: number, d: number) => (d > 0 ? `${n}/${d} (${Math.round((n / d) 
 const ms = (v: number | null | undefined) => (typeof v === 'number' ? `${Math.round(v)} ms` : '-');
 const num = (v: number | null | undefined, digits = 3) => (typeof v === 'number' ? v.toFixed(digits) : '-');
 
-function attrValue(a: JewelryAttributes | null | undefined, key: keyof JewelryAttributes): string {
+function attrValue(a: JewelryAttributes | null | undefined, key: string): string {
   if (!a) return '';
-  const v = a[key];
+  const v = (a as unknown as Record<string, unknown>)[key];
   if (v === undefined || v === null) return '';
   if (Array.isArray(v)) return v.length ? v.join(', ') : '(none)';
+  if (typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>)
+      .filter(([, x]) => x !== undefined && x !== null)
+      .map(([k, x]) => `${k}=${String(x)}`)
+      .join('; ');
+  }
   return String(v);
+}
+
+/** Preferred order first, then any other (v3 category-specific) fields present on either side. */
+function attributeFields(...sources: (JewelryAttributes | null | undefined)[]): string[] {
+  const seen = new Set<string>(ATTRIBUTE_FIELDS);
+  const extra: string[] = [];
+  for (const a of sources) {
+    if (!a) continue;
+    for (const k of Object.keys(a)) {
+      if (k === 'is_jewelry' || seen.has(k)) continue;
+      seen.add(k);
+      extra.push(k);
+    }
+  }
+  return [...ATTRIBUTE_FIELDS, ...extra];
 }
 
 function outcomeText(r: ScanTestRecord): string {
@@ -298,7 +319,7 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
       if (top1) head.push('#1 result (catalog)');
       table(
         [head],
-        ATTRIBUTE_FIELDS.map((f) => {
+        attributeFields(r.ai_attributes, correct, top1).map((f) => {
           const row = [f, attrValue(r.ai_attributes, f), attrValue(correct, f)];
           if (top1) row.push(attrValue(top1, f));
           return row;

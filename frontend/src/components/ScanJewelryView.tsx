@@ -672,7 +672,12 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       <div className="sj-chips-wrap">
         {entries.map(([k, v]) => (
           <span key={k} className="sj-attr">
-            <b>{k.replace(/_/g, ' ')}:</b> {Array.isArray(v) ? v.join(', ') : String(v)}
+            <b>{k.replace(/_/g, ' ')}:</b>{' '}
+            {Array.isArray(v)
+              ? v.join(', ')
+              : typeof v === 'object'
+                ? Object.entries(v as Record<string, unknown>).map(([ek, ev]) => `${ek}=${String(ev)}`).join('; ')
+                : String(v)}
           </span>
         ))}
       </div>
@@ -945,6 +950,7 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
                               {m.match_prompt_version && m.match_prompt_version !== response.prompt_version && (
                                 <span className="sj-stale"> · old vector ({m.match_prompt_version})</span>
                               )}
+                              {m.match_component === 'earring' && <span> · matched by its earrings</span>}
                             </div>
                             {isOwner && m.cost_price !== undefined && (
                               <div className="sj-small sj-muted">Cost ₹{m.cost_price.toFixed(2)}</div>
