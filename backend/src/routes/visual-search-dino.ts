@@ -27,7 +27,7 @@ type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 const dino = new Hono<AppEnv>();
 
 // ─── Constants (must match frontend/src/lib/dino/config.ts) ─────────
-export const DINO_MODEL_VERSION = 'dinov2s-224-cls-v1';
+export const DINO_MODEL_VERSION = 'dinov2s-q8-224-cls-v2';
 const DINO_DIMENSIONS = 384;
 const MODEL_DIR = 'dinov2-small-v1'; // R2: models/dinov2-small-v1/model.onnx
 const TOP_K = 6;

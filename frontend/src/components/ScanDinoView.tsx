@@ -65,7 +65,27 @@ const CATEGORY_CHIPS: { value: ScanCategory | null; label: string }[] = [
   { value: 'pendant_set', label: 'Pendant set (PD)' },
 ];
 
-const EMBED_BATCH = 10; // vectors per /embed request
+const EMBED_BATCH = 5; // vectors per /embed request (saved often, so a crash loses little)
+/** Set while learning runs; if it is still set when the tab opens, the last run crashed (e.g. out of memory). */
+const LEARNING_FLAG_KEY = 'dino_learning_active';
+/** Auto-learn only small batches (new uploads); big batches need a tap, ideally on a laptop. */
+const AUTO_LEARN_MAX = 10;
+
+const readLearningFlag = () => {
+  try {
+    return localStorage.getItem(LEARNING_FLAG_KEY);
+  } catch {
+    return null;
+  }
+};
+const writeLearningFlag = (on: boolean) => {
+  try {
+    if (on) localStorage.setItem(LEARNING_FLAG_KEY, new Date().toISOString());
+    else localStorage.removeItem(LEARNING_FLAG_KEY);
+  } catch {
+    /* ignore */
+  }
+};
 const PREVIEW_MAX = 768; // preview image only (never sent anywhere)
 
 type PickerMode = 'not_in_top6';
@@ -139,6 +159,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
   const [learnErrors, setLearnErrors] = useState<string[]>([]);
   const stopLearnRef = useRef(false);
   const autoLearnTriedRef = useRef(false);
+  const [crashedLastTime] = useState(() => Boolean(readLearningFlag()));
 
   // ═══ Model loading ═══
   const startModel = useCallback(async () => {
@@ -278,26 +299,17 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       return;
     }
     const tTap = performance.now();
-    const { sx, sy, sw, sh } = cropRect(srcW, srcH, from === 'camera');
+    const crop = cropRect(srcW, srcH, from === 'camera');
 
-    // Freeze the exact region into a canvas (video frames change; this is what gets embedded)
-    const frame = document.createElement('canvas');
-    frame.width = Math.round(sw);
-    frame.height = Math.round(sh);
-    const fctx = frame.getContext('2d');
-    if (!fctx) {
-      showToast('error', 'Capture failed', 'Could not get 2D canvas context');
-      return;
-    }
-    fctx.drawImage(source, sx, sy, sw, sh, 0, 0, frame.width, frame.height);
-
-    // Small preview for the screen only
-    const pScale = Math.min(1, PREVIEW_MAX / Math.max(frame.width, frame.height));
+    // Small preview for the screen only (freed right after; iOS has a hard canvas-memory limit)
+    const pScale = Math.min(1, PREVIEW_MAX / Math.max(crop.sw, crop.sh));
     const preview = document.createElement('canvas');
-    preview.width = Math.round(frame.width * pScale);
-    preview.height = Math.round(frame.height * pScale);
-    preview.getContext('2d')?.drawImage(frame, 0, 0, preview.width, preview.height);
+    preview.width = Math.round(crop.sw * pScale);
+    preview.height = Math.round(crop.sh * pScale);
+    preview.getContext('2d')?.drawImage(source, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, preview.width, preview.height);
     setCapturedPreview(preview.toDataURL('image/jpeg', 0.8));
+    preview.width = 0;
+    preview.height = 0;
 
     setIsSearching(true);
     setSearchError(null);
@@ -321,7 +333,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       source: from,
       prompt_version: DINO_MODEL_VERSION,
       category_filter: category,
-      image: { width: frame.width, height: frame.height, bytes: 0 },
+      image: { width: Math.round(crop.sw), height: Math.round(crop.sh), bytes: 0 },
       client_round_trip_ms: null,
       telemetry: { compute_backend: loadInfo?.backend, ...firstScanLoad },
       rejected: false,
@@ -339,7 +351,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
 
     let emb: Awaited<ReturnType<typeof embedImage>> | null = null;
     try {
-      emb = await embedImage(frame, frame.width, frame.height);
+      emb = await embedImage(source, crop); // same frame as the preview (both drawn synchronously)
       queryVectorRef.current = emb.vector;
       const res = await api.visualSearchDino.search(DINO_MODEL_VERSION, emb.vector, category);
       const roundTrip = Math.round(performance.now() - tTap);
@@ -534,6 +546,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     setIsLearning(true);
     stopLearnRef.current = false;
     setLearnErrors([]);
+    writeLearningFlag(true);
     try {
       await loadDino((loaded, total) => setModelProgress({ loaded, total }));
       const { items } = await api.visualSearchDino.pending();
@@ -556,7 +569,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         try {
           const bmp = await loadCatalogBitmap(api.images.getUrl(it.image_key, it.updated_at));
           try {
-            const emb = await embedImage(bmp, bmp.width, bmp.height);
+            const emb = await embedImage(bmp, { sx: 0, sy: 0, sw: bmp.width, sh: bmp.height });
             batch.push({ id: it.id, vector: emb.vector });
           } finally {
             bmp.close();
@@ -572,6 +585,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         }
         done++;
         setLearnProgress({ done, total: items.length });
+        await new Promise((r) => setTimeout(r, 30)); // let the browser breathe / free memory between photos
       }
       await flush();
       if (stopLearnRef.current) showToast('info', 'Learning paused', `${done} of ${items.length} processed.`);
@@ -580,6 +594,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     } catch (err: any) {
       showToast('error', 'Learning failed', err?.data?.error || err?.message || 'Unknown error');
     } finally {
+      writeLearningFlag(false);
       setIsLearning(false);
       fetchStatus();
     }
@@ -587,11 +602,11 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
 
   // New uploads: when the owner opens this tab and the model is ready, learn waiting items automatically.
   useEffect(() => {
-    if (!isOwner || autoLearnTriedRef.current) return;
-    if (modelState !== 'ready' || !status || status.pending === 0 || !isOnline) return;
+    if (!isOwner || autoLearnTriedRef.current || crashedLastTime) return;
+    if (modelState !== 'ready' || !status || status.pending === 0 || status.pending > AUTO_LEARN_MAX || !isOnline) return;
     autoLearnTriedRef.current = true;
     learnPending();
-  }, [isOwner, modelState, status, isOnline, learnPending]);
+  }, [isOwner, modelState, status, isOnline, learnPending, crashedLastTime]);
 
   const handleRelearnAll = async () => {
     if (!window.confirm('Re-learn every catalog photo on this device? (Free: no AI quota is used.)')) return;
@@ -669,6 +684,16 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
                 <RefreshCw size={12} /> Retry
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isOwner && crashedLastTime && !isLearning && (
+        <div className="sj-alert sj-alert-amber">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>Learning stopped unexpectedly last time</strong> (the browser probably ran out of memory and reloaded).
+            Progress is saved every 5 photos. Tap <b>Learn now</b> to continue, or use a laptop for big batches.
           </div>
         </div>
       )}

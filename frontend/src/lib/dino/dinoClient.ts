@@ -2,12 +2,13 @@
  * Main-thread wrapper around the DINOv2 worker.
  *
  * Preprocessing is identical for catalog photos and scans (that is what makes fingerprints comparable):
- *   1. pad to a square with white (never crop — pieces near the edge must stay in the frame)
- *   2. resize to 224x224 (stepwise halving first, so large camera frames don't alias)
+ *   1. pad to a square with white (never crop — pieces near the edge must stay in the frame), 448px
+ *   2. resize to 224x224
  *   3. RGB / 255, ImageNet mean/std, CHW float32
  */
 import {
   DINO_CACHE_NAME,
+  DINO_FORCE_WASM,
   DINO_INPUT_SIZE,
   DINO_MEAN,
   DINO_MODEL_BYTES,
@@ -90,6 +91,7 @@ export function loadDino(onProgress?: (loaded: number, total: number) => void): 
       sha256: DINO_MODEL_SHA256,
       cacheName: DINO_CACHE_NAME,
       expectedBytes: DINO_MODEL_BYTES,
+      forceWasm: DINO_FORCE_WASM,
     })
       .then((m) => {
         loadInfo = { backend: m.backend, loadMs: m.loadMs, fromCache: m.fromCache, downloadMs: m.downloadMs };
@@ -103,67 +105,76 @@ export function loadDino(onProgress?: (loaded: number, total: number) => void): 
   return loadPromise;
 }
 
-/** Draws `source` padded to a square and returns the normalised 1x3x224x224 tensor data. */
-export function preprocessToTensor(source: CanvasImageSource, srcW: number, srcH: number): Float32Array {
+// Two small canvases reused for every photo. iOS Safari has a hard total-canvas-memory limit and frees
+// canvases late, so creating new canvases per photo (old code) crashed the tab after a few dozen photos.
+const PAD_SIDE = DINO_INPUT_SIZE * 2; // 448: intermediate step keeps downscaling sharp
+let padCanvas: HTMLCanvasElement | null = null;
+let outCanvas: HTMLCanvasElement | null = null;
+
+function canvases(): { pad: CanvasRenderingContext2D; out: CanvasRenderingContext2D } {
+  if (!padCanvas) {
+    padCanvas = document.createElement('canvas');
+    padCanvas.width = PAD_SIDE;
+    padCanvas.height = PAD_SIDE;
+  }
+  if (!outCanvas) {
+    outCanvas = document.createElement('canvas');
+    outCanvas.width = DINO_INPUT_SIZE;
+    outCanvas.height = DINO_INPUT_SIZE;
+  }
+  const pad = padCanvas.getContext('2d');
+  const out = outCanvas.getContext('2d', { willReadFrequently: true });
+  if (!pad || !out) throw new Error('Could not get 2D canvas context');
+  pad.imageSmoothingEnabled = true;
+  pad.imageSmoothingQuality = 'high';
+  out.imageSmoothingEnabled = true;
+  out.imageSmoothingQuality = 'high';
+  return { pad, out };
+}
+
+export interface CropRect {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
+/**
+ * Draws the `crop` region of `source` padded to a white square (never cropped further), scales it to
+ * 224x224 and returns the normalised 1x3x224x224 tensor data.
+ */
+export function preprocessToTensor(source: CanvasImageSource, crop: CropRect): Float32Array {
   const size = DINO_INPUT_SIZE;
-  const side = Math.max(srcW, srcH);
+  const { pad, out } = canvases();
 
-  // Step 1: pad to a square at (at most) 4x the target size
-  let cur = document.createElement('canvas');
-  const firstSide = Math.min(side, size * 4);
-  const scale = firstSide / side;
-  cur.width = firstSide;
-  cur.height = firstSide;
-  let ctx = cur.getContext('2d');
-  if (!ctx) throw new Error('Could not get 2D canvas context');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.fillStyle = DINO_PAD_COLOR;
-  ctx.fillRect(0, 0, firstSide, firstSide);
-  const dw = srcW * scale;
-  const dh = srcH * scale;
-  ctx.drawImage(source, 0, 0, srcW, srcH, (firstSide - dw) / 2, (firstSide - dh) / 2, dw, dh);
+  // Step 1: fit the region inside a 448 square, centred, white padding
+  const scale = PAD_SIDE / Math.max(crop.sw, crop.sh);
+  const dw = crop.sw * scale;
+  const dh = crop.sh * scale;
+  pad.fillStyle = DINO_PAD_COLOR;
+  pad.fillRect(0, 0, PAD_SIDE, PAD_SIDE);
+  pad.drawImage(source, crop.sx, crop.sy, crop.sw, crop.sh, (PAD_SIDE - dw) / 2, (PAD_SIDE - dh) / 2, dw, dh);
 
-  // Step 2: halve until within 2x, then final resize to 224
-  while (cur.width / 2 >= size) {
-    const next = document.createElement('canvas');
-    next.width = Math.max(size, Math.floor(cur.width / 2));
-    next.height = next.width;
-    const nctx = next.getContext('2d')!;
-    nctx.imageSmoothingEnabled = true;
-    nctx.imageSmoothingQuality = 'high';
-    nctx.drawImage(cur, 0, 0, next.width, next.height);
-    cur = next;
-  }
-  if (cur.width !== size) {
-    const fin = document.createElement('canvas');
-    fin.width = size;
-    fin.height = size;
-    const fctx = fin.getContext('2d')!;
-    fctx.imageSmoothingEnabled = true;
-    fctx.imageSmoothingQuality = 'high';
-    fctx.drawImage(cur, 0, 0, size, size);
-    cur = fin;
-  }
-  ctx = cur.getContext('2d')!;
-  const { data } = ctx.getImageData(0, 0, size, size);
+  // Step 2: 448 → 224
+  out.drawImage(padCanvas!, 0, 0, size, size);
+  const { data } = out.getImageData(0, 0, size, size);
 
   // Step 3: normalise to CHW float32
   const plane = size * size;
-  const out = new Float32Array(3 * plane);
+  const t = new Float32Array(3 * plane);
   for (let i = 0; i < plane; i++) {
     const p = i * 4;
-    out[i] = (data[p] / 255 - DINO_MEAN[0]) / DINO_STD[0];
-    out[plane + i] = (data[p + 1] / 255 - DINO_MEAN[1]) / DINO_STD[1];
-    out[2 * plane + i] = (data[p + 2] / 255 - DINO_MEAN[2]) / DINO_STD[2];
+    t[i] = (data[p] / 255 - DINO_MEAN[0]) / DINO_STD[0];
+    t[plane + i] = (data[p + 1] / 255 - DINO_MEAN[1]) / DINO_STD[1];
+    t[2 * plane + i] = (data[p + 2] / 255 - DINO_MEAN[2]) / DINO_STD[2];
   }
-  return out;
+  return t;
 }
 
 /** Full on-device fingerprint for an image source (model must be loaded). */
-export async function embedImage(source: CanvasImageSource, srcW: number, srcH: number): Promise<DinoEmbedding> {
+export async function embedImage(source: CanvasImageSource, crop: CropRect): Promise<DinoEmbedding> {
   const t0 = performance.now();
-  const pixels = preprocessToTensor(source, srcW, srcH);
+  const pixels = preprocessToTensor(source, crop);
   const preprocessMs = Math.round(performance.now() - t0);
   const res = await call<any>({ type: 'embed', pixels, size: DINO_INPUT_SIZE }, [pixels.buffer]);
   return { vector: Array.from(res.vector as Float32Array), preprocessMs, inferenceMs: res.inferenceMs };
