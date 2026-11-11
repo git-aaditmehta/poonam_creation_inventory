@@ -22,6 +22,7 @@ const images = new Hono<AppEnv>();
 
 const MAX_FULL_SIZE = 5 * 1024 * 1024;  // 5MB
 const MAX_THUMB_SIZE = 500 * 1024;       // 500KB
+const MAX_AI_SIZE = 2 * 1024 * 1024;     // 2MB — optional higher-detail copy used ONCE for AI indexing, never stored
 const ALLOWED_MIME = ['image/webp', 'image/jpeg', 'image/png'];
 
 function isValidImageBytes(buffer: ArrayBuffer): boolean {
@@ -51,6 +52,9 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
   const fullImage = formData.get('full_image') as File | null;
   const thumbImage = formData.get('thumb_image') as File | null;
   const itemId = formData.get('item_id') as string | null;
+  // Optional: a sharper (≤1120px) copy for the vision model. Used for this one embedding and discarded;
+  // R2 storage is unchanged. Re-index later uses the stored full image.
+  const aiImage = formData.get('ai_image') as File | null;
 
   if (!fullImage || !thumbImage || !itemId) {
     return c.json({ error: 'full_image, thumb_image, and item_id are required' }, 400);
@@ -68,6 +72,15 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
   }
   if (thumbImage.size > MAX_THUMB_SIZE) {
     return c.json({ error: 'Thumbnail must be under 500KB' }, 400);
+  }
+  let aiArrayBuffer: ArrayBuffer | null = null;
+  if (aiImage && aiImage.size > 0) {
+    const okType = !aiImage.type || ALLOWED_MIME.includes(aiImage.type.toLowerCase());
+    if (okType && aiImage.size <= MAX_AI_SIZE) {
+      const buf = await aiImage.arrayBuffer();
+      if (isValidImageBytes(buf)) aiArrayBuffer = buf;
+    }
+    // Anything wrong with the optional copy → silently fall back to the stored image (upload must never fail for it)
   }
 
   // Upload to R2
@@ -135,7 +148,7 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
       const result = await embedCatalogItem(
         c.env,
         { id: itemId, item_id: item.item_id, image_key: imageKey },
-        new Uint8Array(fullArrayBuffer)
+        new Uint8Array(aiArrayBuffer ?? fullArrayBuffer)
       );
       embeddingStatus = result.ok ? 'success' : 'failed';
       if (!result.ok) console.warn(`[AutoEmbed] Embedding failed for ${item.item_id} (non-fatal): ${result.error}`);

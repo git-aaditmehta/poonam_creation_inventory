@@ -9,7 +9,16 @@ export interface ProcessedImages {
   thumbBlob: Blob;
   fullDataUrl: string;
   thumbDataUrl: string;
+  /**
+   * Sharper copy (max 1120px, the most the vision model can use) sent ONLY for AI indexing
+   * during upload and then discarded by the server. Not stored anywhere. Null if the source is
+   * not larger than the stored full image (nothing to gain).
+   */
+  aiBlob: Blob | null;
 }
+
+const AI_COPY_MAX_PX = 1120;
+const AI_COPY_QUALITY = 0.88;
 
 export async function processJewelryImage(file: File): Promise<ProcessedImages> {
   return new Promise((resolve, reject) => {
@@ -31,15 +40,22 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
           const { canvas: thumbCanvas } = resizeToCanvas(img, 500, 500);
           const thumbDataUrl = thumbCanvas.toDataURL(format, 0.85);
 
+          // Temporary AI copy: only when the original has more detail than the stored 900px image
+          const aiPromise: Promise<Blob | null> =
+            Math.max(img.width, img.height) > 900
+              ? canvasToBlobSafe(resizeToCanvas(img, AI_COPY_MAX_PX, AI_COPY_MAX_PX).canvas, AI_COPY_QUALITY, 'image/jpeg').catch(() => null)
+              : Promise.resolve(null);
+
           canvasToBlobSafe(fullCanvas, 0.75, format)
             .then((fullBlob) => {
               canvasToBlobSafe(thumbCanvas, 0.85, format)
-                .then((thumbBlob) => {
+                .then(async (thumbBlob) => {
                   resolve({
                     fullBlob,
                     thumbBlob,
                     fullDataUrl,
                     thumbDataUrl,
+                    aiBlob: await aiPromise,
                   });
                 })
                 .catch(reject);

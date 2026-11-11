@@ -262,7 +262,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
     // Instant local image processing (<15ms)
     let localThumbUrl = '';
-    let processedImage: { fullBlob: Blob; thumbBlob: Blob } | null = null;
+    let processedImage: { fullBlob: Blob; thumbBlob: Blob; aiBlob: Blob | null } | null = null;
     if (currentQueued) {
       try {
         processedImage = await processJewelryImage(currentQueued.file);
@@ -372,6 +372,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
             formData.append('item_id', authoritativeId);
             formData.append('full_image', processedImage.fullBlob, `full.${ext}`);
             formData.append('thumb_image', processedImage.thumbBlob, `thumb.${ext}`);
+            if (processedImage.aiBlob) formData.append('ai_image', processedImage.aiBlob, 'ai.jpg'); // used once for AI, not stored
             const uploadRes = await api.images.upload(formData);
             uploadedFullKey = uploadRes.image_key;
             uploadedThumbKey = uploadRes.thumb_key;
@@ -518,6 +519,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       formData.append('item_id', activeItem.id);
       formData.append('full_image', processed.fullBlob, `full.${ext}`);
       formData.append('thumb_image', processed.thumbBlob, `thumb.${ext}`);
+      if (processed.aiBlob) formData.append('ai_image', processed.aiBlob, 'ai.jpg'); // used once for AI, not stored
       const uploadRes = await api.images.upload(formData);
       showToast('success', 'Image Uploaded', `Image saved for ${activeItem.item_id}`);
       if (detailItem && detailItem.id === activeItem.id) {

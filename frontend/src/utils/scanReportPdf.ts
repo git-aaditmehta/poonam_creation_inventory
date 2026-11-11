@@ -178,12 +178,25 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
             ['Avg vision output tokens', num(s.avgCompletionTokens, 0)],
             ['Scans that needed a JSON retry', s.retries],
           ]),
+      ...(isDino ? [] : [['Close calls (#1 and #2 within 0.03)', `${s.closeCalls.total} (#1 was right in ${s.closeCalls.top1Correct})`]]),
       ['Avg #1 score when #1 was correct', num(s.top1ScoreWhenCorrect)],
       ['Avg #1 score when #1 was wrong', num(s.top1ScoreWhenWrong)],
       ['Avg score of the correct item', num(s.avgCorrectItemScore)],
     ],
     { columnStyles: { 0: { cellWidth: 260 } } }
   );
+
+  // ── Attribute reliability (Llama only): which fields the model gets wrong between photo and catalog ──
+  if (!isDino && Object.keys(s.fieldAgreement).length) {
+    heading('3b. Attribute agreement (phone photo vs correct item)');
+    table(
+      [['Attribute', 'Compared', 'Agreed', 'Agreement']],
+      Object.entries(s.fieldAgreement)
+        .sort((a, b) => a[1].agreed / a[1].compared - b[1].agreed / b[1].compared)
+        .map(([k, v]) => [k, v.compared, v.agreed, pct(v.agreed, v.compared)]),
+      { columnStyles: { 0: { cellWidth: 160 } } }
+    );
+  }
 
   // ── AI usage (neurons) — Llama only ──
   const n = s.neurons;
@@ -263,10 +276,14 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
     if (r.selection) {
       info.push([
         'Correct item',
-        `${r.selection.item_id} | rank ${r.selection.rank ?? 'not in top 6'} | score ${num(r.selection.score)} | ${r.selection.indexed ? 'indexed' : 'NOT INDEXED'}`,
+        `${r.selection.item_id} | rank ${r.selection.rank ?? 'not in top 6'} | score ${num(r.selection.score)}${
+          typeof r.selection.cosine === 'number' ? ` (cosine ${num(r.selection.cosine)}, attributes ${num(r.selection.attr_score)})` : ''
+        } | ${r.selection.indexed ? 'indexed' : 'NOT INDEXED'}`,
       ]);
       if (r.selection.embedding_text) info.push(['Correct item text', r.selection.embedding_text]);
     }
+    if (r.uncertain) info.push(['Close call', '#1 and #2 were within 0.03 of each other']);
+    if (r.category_hint_warning) info.push(['Chip warning', r.category_hint_warning]);
     if (r.reason) info.push(['Your note', r.reason]);
     if (r.filter_warning) info.push(['Filter warning', r.filter_warning]);
     if (r.error) info.push(['Error', r.error]);
@@ -301,8 +318,12 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
 
     if (r.matches.length) {
       table(
-        [['Rank', 'Item', 'Score', 'Category', 'Correct?']],
-        r.matches.map((m) => [m.rank, m.item_id, num(m.score), m.category || '-', r.selection?.id === m.id ? 'YES' : ''])
+        isDino ? [['Rank', 'Item', 'Score', 'Category', 'Correct?']] : [['Rank', 'Item', 'Final', 'Cosine', 'Attributes', 'Category', 'Correct?']],
+        r.matches.map((m) =>
+          isDino
+            ? [m.rank, m.item_id, num(m.score), m.category || '-', r.selection?.id === m.id ? 'YES' : '']
+            : [m.rank, m.item_id, num(m.score), num(m.cosine), num(m.attr_score), m.category || '-', r.selection?.id === m.id ? 'YES' : '']
+        )
       );
     }
     y += 6;

@@ -60,8 +60,15 @@ const CATEGORY_CHIPS: { value: ScanCategory | null; label: string }[] = [
   { value: 'pendant_set', label: 'Pendant set (PD)' },
 ];
 
-const MAX_SEND_DIM = 768; // Llama sees enough detail to count stones/bells; ~60–150 KB JPEG
-const JPEG_QUALITY = 0.82;
+/**
+ * Llama 3.2 Vision tiles every image to 1120px (4 x 560), so 1120 is the most detail it can use.
+ * Phone camera squares are 1080px → sent as-is (no up/downscaling). Larger gallery photos are reduced to 1120.
+ */
+const MAX_SEND_DIM = 1120;
+const JPEG_QUALITY = 0.85;
+/** Keep well under the server's 1 MB guard; re-encode at lower quality if a photo is unusually heavy. */
+const MAX_SEND_BYTES = 450 * 1024;
+const FALLBACK_QUALITIES = [0.75, 0.65, 0.55];
 
 interface PreparedImage {
   dataUrl: string;
@@ -242,8 +249,16 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(source, sx, sy, sw, sh, 0, 0, width, height);
-    const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-    const bytes = Math.round(((dataUrl.length - dataUrl.indexOf(',') - 1) * 3) / 4);
+    const sizeOf = (d: string) => Math.round(((d.length - d.indexOf(',') - 1) * 3) / 4);
+    let dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+    let bytes = sizeOf(dataUrl);
+    for (const q of FALLBACK_QUALITIES) {
+      if (bytes <= MAX_SEND_BYTES) break;
+      dataUrl = canvas.toDataURL('image/jpeg', q);
+      bytes = sizeOf(dataUrl);
+    }
+    canvas.width = 0;
+    canvas.height = 0;
     return { dataUrl, width, height, bytes };
   };
 
@@ -312,6 +327,10 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       const record: ScanTestRecord = {
         ...base,
         prompt_version: res.prompt_version || null,
+        rank_version: res.rank_version || null,
+        uncertain: Boolean(res.uncertain),
+        ai_category_guess: res.ai_category_guess ?? null,
+        category_hint_warning: res.category_hint_warning ?? null,
         client_round_trip_ms: roundTrip,
         telemetry: {
           vision_ms: t?.vision_ms,
@@ -333,6 +352,9 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
           item_id: m.item_id,
           score: m.score,
           category: m.match_category ?? null,
+          cosine: m.match_cosine,
+          attr_score: m.match_attr_score ?? null,
+          breakdown: m.match_breakdown ?? null,
         })),
         top1_attributes: res.matches?.[0]?.match_attributes ?? null,
         filter_warning: res.filter_warning || null,
@@ -340,6 +362,7 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       updateRecords((prev) => [...prev, record]);
       setCurrentRecordId(record.id);
       if (res.filter_warning) showToast('warning', 'Category filter', res.filter_warning);
+      if (res.category_hint_warning) showToast('warning', 'Check the chip', res.category_hint_warning);
     } catch (err: any) {
       const roundTrip = Math.round(performance.now() - t0);
       const isQuota = err.status === 429 || err.data?.quota_exhausted;
@@ -450,6 +473,8 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       indexed: true,
       attributes: match.match_attributes ?? null,
       embedding_text: match.match_embedding_text ?? null,
+      cosine: match.match_cosine ?? null,
+      attr_score: match.match_attr_score ?? null,
     });
   };
 
@@ -488,14 +513,25 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
     let attributes: JewelryAttributes | null = null;
     let embeddingText: string | null = null;
     let score: number | null = null;
+    let cosine: number | null = null;
+    let attrScore: number | null = null;
     let cat: string | null = null;
     try {
-      const d = await api.visualSearch.descriptor(item.id);
+      // Scored lookup (same re-ranking as the search) when we still have the query; plain lookup otherwise
+      const d = queryVectorRef.current
+        ? await api.visualSearch.descriptorScored(item.id, queryVectorRef.current, response?.ai_attributes ?? null, category)
+        : await api.visualSearch.descriptor(item.id);
       indexed = d.indexed;
       attributes = d.attributes ?? null;
       embeddingText = d.embedding_text ?? null;
       cat = d.category ?? null;
-      if (d.values && queryVectorRef.current) score = cosineSimilarity(queryVectorRef.current, d.values);
+      if (typeof d.score === 'number') {
+        score = d.score;
+        cosine = d.cosine ?? null;
+        attrScore = d.attr_score ?? null;
+      } else if (d.values && queryVectorRef.current) {
+        score = cosineSimilarity(queryVectorRef.current, d.values);
+      }
     } catch {
       showToast('warning', 'Partial info', 'Could not load this item’s stored vector; saved without its score.');
     } finally {
@@ -510,6 +546,8 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       indexed,
       attributes,
       embedding_text: embeddingText,
+      cosine,
+      attr_score: attrScore,
     });
     if (!indexed) showToast('warning', 'Item not indexed', `${item.item_id} has no vector, so search could never find it.`);
   };
@@ -831,7 +869,13 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
                 embed {response.telemetry?.embedding_ms ?? '-'} · search {response.telemetry?.vectorize_ms ?? '-'}
                 {(response.telemetry?.vision_attempts ?? 1) > 1 && ' · JSON retry'}
                 {currentRecord && estimateNeurons(currentRecord) && ` · ~${estimateNeurons(currentRecord)!.total.toFixed(1)} neurons`}
+                {response.candidates_considered !== undefined && ` · ${response.candidates_considered} candidates re-ranked`}
               </div>
+              {response.uncertain && (
+                <div className="sj-alert sj-alert-amber">
+                  <AlertTriangle size={18} /> Close call: #1 and #2 scored almost the same.
+                </div>
+              )}
 
               {outcomeBanner && (
                 <div className="sj-saved">
@@ -893,7 +937,11 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
                           <div className="sj-match-info">
                             <div className="sj-match-id">{m.item_id}</div>
                             <div className="sj-small sj-muted">
-                              score {m.score.toFixed(3)} · {m.quantity} {m.unit}
+                              score {m.score.toFixed(3)}
+                              {typeof m.match_cosine === 'number' && (
+                                <span> (text {m.match_cosine.toFixed(3)}{typeof m.match_attr_score === 'number' ? ` · attrs ${m.match_attr_score.toFixed(2)}` : ''})</span>
+                              )}
+                              {' · '}{m.quantity} {m.unit}
                               {m.match_prompt_version && m.match_prompt_version !== response.prompt_version && (
                                 <span className="sj-stale"> · old vector ({m.match_prompt_version})</span>
                               )}

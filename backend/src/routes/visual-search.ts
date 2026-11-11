@@ -16,6 +16,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
+import { CLOSE_CALL_MARGIN, RANK_VERSION, finalScore, scoreAttributes } from '../utils/jewelryRank';
 import {
   analyzeJewelryImage,
   attributesFromMetadata,
@@ -33,9 +34,12 @@ type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 const visualSearch = new Hono<AppEnv>();
 
 // ─── Constants ───────────────────────────────────────────────────────
-const VECTOR_TOP_K = 6;
+const RESULT_COUNT = 6;
+/** Candidates pulled from Vectorize before attribute re-ranking (metadata-returning queries allow up to 50). */
+const CANDIDATE_COUNT = 50;
+const CANDIDATE_COUNT_FALLBACK = 20;
 const BACKFILL_BATCH_SIZE = 5; // each item = R2 read + 1–2 vision calls + embed + upsert + D1 write
-const MAX_SEARCH_IMAGE_BYTES = 500 * 1024; // 500 KB guard (client sends ~768px JPEG, ~60–150 KB)
+const MAX_SEARCH_IMAGE_BYTES = 1024 * 1024; // 1 MB guard (client sends ≤1120px JPEG and keeps itself under ~450 KB)
 const MIN_SCORE_THRESHOLD = 0.15; // effectively off for now; to be calibrated from test reports
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -156,15 +160,19 @@ visualSearch.post('/search', authMiddleware, async (c) => {
     });
   }
 
-  // Step 5: Vectorize nearest neighbours (optionally filtered by category chip)
+  // Step 5: Vectorize candidates (optionally filtered by category chip), then attribute re-ranking.
+  // Many different pieces share an identical canonical text (cosine ties at 1.000), so the
+  // vector step is only a recall stage; the order is decided field by field in Step 5b.
   let vectorResults: any;
   const vectorizeStart = Date.now();
+  const queryOpts = { returnMetadata: 'all', ...(categoryFilter ? { filter: { category: categoryFilter } } : {}) };
   try {
-    vectorResults = await c.env.VECTORIZE.query(result.vector, {
-      topK: VECTOR_TOP_K,
-      returnMetadata: 'all',
-      ...(categoryFilter ? { filter: { category: categoryFilter } } : {}),
-    });
+    try {
+      vectorResults = await c.env.VECTORIZE.query(result.vector, { topK: CANDIDATE_COUNT, ...queryOpts });
+    } catch (firstErr) {
+      console.warn('[VisualSearch] topK', CANDIDATE_COUNT, 'failed, retrying with', CANDIDATE_COUNT_FALLBACK, firstErr);
+      vectorResults = await c.env.VECTORIZE.query(result.vector, { topK: CANDIDATE_COUNT_FALLBACK, ...queryOpts });
+    }
   } catch (err) {
     console.error('[VisualSearch] Vectorize query error:', err);
     return c.json({ error: 'Vector search failed.', detail: err instanceof Error ? err.message : 'Unknown error' }, 500);
@@ -172,7 +180,25 @@ visualSearch.post('/search', authMiddleware, async (c) => {
   const vectorizeMs = Date.now() - vectorizeStart;
 
   const rawMatches: any[] = vectorResults?.matches || [];
-  const qualifiedMatches = rawMatches.filter((m) => m.score >= MIN_SCORE_THRESHOLD);
+
+  // Step 5b: re-rank candidates by attribute agreement + stretched cosine, keep the best RESULT_COUNT
+  const queryAttrs = result.attributes;
+  const ranked = rawMatches
+    .filter((m) => m.score >= MIN_SCORE_THRESHOLD)
+    .map((m) => {
+      const candAttrs = attributesFromMetadata(m.metadata);
+      const attr = candAttrs ? scoreAttributes(queryAttrs, candAttrs, { categoryCertain: Boolean(categoryFilter) }) : null;
+      return {
+        ...m,
+        cosine: m.score,
+        attr_score: attr?.score ?? null,
+        breakdown: attr?.breakdown ?? null,
+        final: finalScore(m.score, attr?.score ?? null),
+      };
+    })
+    .sort((a, b) => b.final - a.final);
+  const qualifiedMatches = ranked.slice(0, RESULT_COUNT);
+  const uncertain = ranked.length >= 2 && ranked[0].final - ranked[1].final < CLOSE_CALL_MARGIN;
 
   // Step 6: Fetch live inventory details from D1
   let dbResults: any[] = [];
@@ -211,7 +237,10 @@ visualSearch.post('/search', authMiddleware, async (c) => {
         is_low_stock: item.quantity < item.low_stock_threshold,
         image_key: item.image_key,
         thumb_key: item.thumb_key,
-        score: m.score,
+        score: m.final, // final (re-ranked) score; cosine and attribute parts below
+        match_cosine: m.cosine,
+        match_attr_score: m.attr_score,
+        match_breakdown: m.breakdown,
         created_at: item.created_at,
         updated_at: item.updated_at,
         // Diagnostics for the test report
@@ -232,11 +261,24 @@ visualSearch.post('/search', authMiddleware, async (c) => {
       'No vectors matched this category. Either nothing in this category is indexed yet, or the Vectorize metadata index on "category" is missing (create it, then re-index).';
   }
 
+  // The chip is trusted for filtering, but if the model read the photo as something else, say so:
+  // a wrong chip makes the correct item impossible to find.
+  const guess = result.aiCategoryGuess;
+  const categoryHintWarning =
+    categoryFilter && guess && guess !== categoryFilter && guess !== 'other'
+      ? `The AI read this photo as "${guess.replace('_', ' ')}", but the ${categoryFilter.replace('_', ' ')} chip is selected. Is the chip right?`
+      : null;
+
   return c.json({
     ...baseResponse,
     rejected: false,
     query_time_ms: totalMs,
     matches,
+    rank_version: RANK_VERSION,
+    candidates_considered: ranked.length,
+    uncertain,
+    ai_category_guess: guess,
+    category_hint_warning: categoryHintWarning,
     filter_warning: filterWarning,
     query_vector: result.vector.map(round),
     telemetry: {
@@ -245,7 +287,7 @@ visualSearch.post('/search', authMiddleware, async (c) => {
       db_ms: dbMs,
       total_pipeline_ms: totalMs,
       matches_found: rawMatches.length,
-      matches_above_threshold: qualifiedMatches.length,
+      matches_above_threshold: ranked.length,
       matches_with_db_data: matches.length,
       score_threshold: MIN_SCORE_THRESHOLD,
     },
@@ -271,6 +313,59 @@ visualSearch.get('/descriptor/:id', authMiddleware, async (c) => {
       embedding_text: vec.metadata?.embed_text ?? null,
       attributes: attributesFromMetadata(vec.metadata),
       values: Array.from(vec.values as ArrayLike<number>).map(round),
+    });
+  } catch (err) {
+    return c.json({ error: 'Failed to read vector', detail: err instanceof Error ? err.message : 'Unknown error' }, 500);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// POST /api/visual-search/descriptor/:id — Same, plus scores against a query
+// Body: { vector: number[384], attributes: JewelryAttributes, category_filter?: string }
+// Lets the test report show the re-ranked score of a correct item that was not in the top 6.
+// ═══════════════════════════════════════════════════════════════════════
+visualSearch.post('/descriptor/:id', authMiddleware, async (c) => {
+  if (!c.env.VECTORIZE) return c.json({ error: 'Vectorize binding not available' }, 503);
+  const id = c.req.param('id');
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  const qv: unknown = body?.vector;
+  if (!Array.isArray(qv) || qv.length !== VECTOR_DIMENSIONS || !qv.every((x) => typeof x === 'number' && Number.isFinite(x))) {
+    return c.json({ error: `vector must be ${VECTOR_DIMENSIONS} finite numbers` }, 400);
+  }
+  try {
+    const vectors = await c.env.VECTORIZE.getByIds([id]);
+    const vec = vectors?.[0];
+    if (!vec) return c.json({ success: true, indexed: false });
+    const values: number[] = Array.from(vec.values as ArrayLike<number>);
+    let dot = 0;
+    let na = 0;
+    let nb = 0;
+    for (let i = 0; i < values.length; i++) {
+      dot += values[i] * (qv[i] as number);
+      na += values[i] * values[i];
+      nb += (qv[i] as number) * (qv[i] as number);
+    }
+    const cosine = na > 0 && nb > 0 ? dot / Math.sqrt(na * nb) : 0;
+    const candAttrs = attributesFromMetadata(vec.metadata);
+    const queryAttrs = body?.attributes && typeof body.attributes === 'object' ? body.attributes : null;
+    const attr = candAttrs && queryAttrs ? scoreAttributes(queryAttrs, candAttrs, { categoryCertain: Boolean(body?.category_filter) }) : null;
+    return c.json({
+      success: true,
+      indexed: true,
+      category: vec.metadata?.category ?? null,
+      prompt_version: vec.metadata?.prompt_version ?? 'v1',
+      embedding_text: vec.metadata?.embed_text ?? null,
+      attributes: candAttrs,
+      values: values.map(round),
+      cosine: round(cosine),
+      attr_score: attr?.score ?? null,
+      breakdown: attr?.breakdown ?? null,
+      score: round(finalScore(cosine, attr?.score ?? null)),
     });
   } catch (err) {
     return c.json({ error: 'Failed to read vector', detail: err instanceof Error ? err.message : 'Unknown error' }, 500);
@@ -448,6 +543,7 @@ visualSearch.get('/status', authMiddleware, ownerOnly, async (c) => {
     coverage_percent: withImages > 0 ? Math.round((indexed / withImages) * 100) : 0,
     remaining: withImages - indexed,
     pipeline: {
+      rank_version: RANK_VERSION,
       vision_model: VISION_MODEL,
       embedding_model: EMBEDDING_MODEL,
       vector_dimensions: VECTOR_DIMENSIONS,

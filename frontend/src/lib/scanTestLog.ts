@@ -26,25 +26,36 @@ export interface ScanMatchSummary {
   rank: number;
   id: string;
   item_id: string;
+  /** Final (re-ranked) score. */
   score: number;
   category: string | null;
+  cosine?: number;
+  attr_score?: number | null;
+  breakdown?: Record<string, { weight: number; match: number }> | null;
 }
 
 export interface ScanSelection {
   id: string;
   item_id: string;
   rank: number | null; // null when the item was not in the top 6
-  score: number | null; // cosine(query, item) — computed even when not in the top 6
+  score: number | null; // final (re-ranked) score — computed even when not in the top 6
   category: string | null;
   indexed: boolean;
   attributes: JewelryAttributes | null;
   embedding_text: string | null;
+  cosine?: number | null;
+  attr_score?: number | null;
 }
 
 export interface ScanTestRecord {
   id: string;
   /** Which feature produced this scan (missing = 'llama', for records saved before DINO existed). */
   pipeline?: 'llama' | 'dino';
+  rank_version?: string | null;
+  /** #1 and #2 were within the close-call margin. */
+  uncertain?: boolean;
+  ai_category_guess?: string | null;
+  category_hint_warning?: string | null;
   n: number;
   ts: string;
   source: 'camera' | 'gallery';
@@ -222,6 +233,10 @@ export interface ScanSummary {
   };
   /** Count of scans per on-device compute backend (DINO). */
   backends: { webgpu: number; wasm: number };
+  /** Scans where #1 and #2 were too close to call, split by whether #1 was right. */
+  closeCalls: { total: number; top1Correct: number };
+  /** Per-attribute agreement between the phone photo and the correct item (Llama). */
+  fieldAgreement: Record<string, { compared: number; agreed: number }>;
   avgPromptTokens: number | null;
   avgCompletionTokens: number | null;
   retries: number;
@@ -264,6 +279,24 @@ export function summarize(records: ScanTestRecord[]): ScanSummary {
     top6: subset.filter((r) => rankOf(r) !== null).length,
   });
 
+  const closeCallRecords = records.filter((r) => r.uncertain);
+  const fieldAgreement: Record<string, { compared: number; agreed: number }> = {};
+  for (const r of catalog) {
+    const q = r.ai_attributes;
+    const c = r.selection?.attributes;
+    if (!q || !c) continue;
+    for (const key of Object.keys(q) as (keyof JewelryAttributes)[]) {
+      if (key === 'is_jewelry' || key === 'category') continue;
+      const a = q[key];
+      const b = c[key];
+      if (a === undefined || b === undefined) continue;
+      const same = Array.isArray(a) && Array.isArray(b) ? [...a].sort().join(',') === [...b].sort().join(',') : a === b;
+      const slot = (fieldAgreement[key] ??= { compared: 0, agreed: 0 });
+      slot.compared++;
+      if (same) slot.agreed++;
+    }
+  }
+
   const neuronValues = records
     .map((r) => estimateNeurons(r)?.total)
     .filter((x): x is number => typeof x === 'number');
@@ -298,6 +331,11 @@ export function summarize(records: ScanTestRecord[]): ScanSummary {
       webgpu: records.filter((r) => r.telemetry.compute_backend === 'webgpu').length,
       wasm: records.filter((r) => r.telemetry.compute_backend === 'wasm').length,
     },
+    closeCalls: {
+      total: closeCallRecords.length,
+      top1Correct: closeCallRecords.filter((r) => rankOf(r) === 1).length,
+    },
+    fieldAgreement,
     avgPromptTokens: mean(records.map((r) => r.telemetry.prompt_tokens).filter((x): x is number => typeof x === 'number')),
     avgCompletionTokens: mean(records.map((r) => r.telemetry.completion_tokens).filter((x): x is number => typeof x === 'number')),
     retries: records.filter((r) => (r.telemetry.vision_attempts ?? 1) > 1).length,

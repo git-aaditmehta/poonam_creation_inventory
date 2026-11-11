@@ -300,6 +300,8 @@ export interface PipelineResult {
   error: string | null;
   quotaExhausted: boolean;
   attributes: JewelryAttributes | null;
+  /** What the model itself thought the category was, before any chip/SKU override. */
+  aiCategoryGuess: JewelryCategory | null;
   embeddingText: string | null;
   rawVisionOutput: string | null;
   vector: number[] | null;
@@ -353,7 +355,7 @@ export async function analyzeJewelryImage(
   const fail = (error: string, quotaExhausted = false, extra: Partial<PipelineResult> = {}): PipelineResult => {
     telemetry.total_ms = Date.now() - start;
     return {
-      ok: false, error, quotaExhausted, attributes: null, embeddingText: null,
+      ok: false, error, quotaExhausted, attributes: null, aiCategoryGuess: null, embeddingText: null,
       rawVisionOutput: null, vector: null, telemetry, ...extra,
     };
   };
@@ -391,6 +393,7 @@ export async function analyzeJewelryImage(
 
   // Step 2: Normalize + apply trusted overrides
   const attributes = normalizeAttributes(parsed);
+  const aiCategoryGuess = attributes.category ?? null;
   if (options.forceJewelry) attributes.is_jewelry = true;
   if (options.categoryOverride) attributes.category = options.categoryOverride;
 
@@ -402,7 +405,7 @@ export async function analyzeJewelryImage(
     // Rejected: no need to spend an embedding call
     telemetry.total_ms = Date.now() - start;
     return {
-      ok: true, error: null, quotaExhausted: false, attributes, embeddingText,
+      ok: true, error: null, quotaExhausted: false, attributes, aiCategoryGuess, embeddingText,
       rawVisionOutput: rawVisionOutput.slice(0, 1500), vector: null, telemetry,
     };
   }
@@ -420,7 +423,7 @@ export async function analyzeJewelryImage(
     telemetry.vector_dimensions = vector.length;
     telemetry.total_ms = Date.now() - start;
     return {
-      ok: true, error: null, quotaExhausted: false, attributes, embeddingText,
+      ok: true, error: null, quotaExhausted: false, attributes, aiCategoryGuess, embeddingText,
       rawVisionOutput: rawVisionOutput.slice(0, 1500), vector, telemetry,
     };
   } catch (err) {

@@ -19,6 +19,7 @@ import type {
   VisualSearchStatusResponse,
   VisualSearchDescriptor,
   ScanCategory,
+  JewelryAttributes,
   DinoStatusResponse,
   DinoPendingResponse,
   DinoEmbedResponse,
@@ -310,6 +311,12 @@ export const api = {
       }),
     descriptor: (id: string) =>
       request<VisualSearchDescriptor>(`/api/visual-search/descriptor/${encodeURIComponent(id)}`),
+    /** Stored vector + attributes of one item, scored against the current query (re-ranked score). */
+    descriptorScored: (id: string, vector: number[], attributes: JewelryAttributes | null, categoryFilter: ScanCategory | null) =>
+      request<VisualSearchDescriptor>(`/api/visual-search/descriptor/${encodeURIComponent(id)}`, {
+        method: 'POST',
+        body: JSON.stringify({ vector, attributes, category_filter: categoryFilter }),
+      }),
     reindexReset: () =>
       request<{ success: boolean; reset: number; prompt_version: string }>('/api/visual-search/reindex-reset', {
         method: 'POST',

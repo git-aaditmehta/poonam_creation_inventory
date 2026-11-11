@@ -186,6 +186,10 @@ export interface VisualSearchMatch {
   match_prompt_version?: string;
   match_embedding_text?: string | null;
   match_attributes?: JewelryAttributes | null;
+  /** Re-ranking parts: `score` is the final mix; these are its components (null for old v1 vectors). */
+  match_cosine?: number;
+  match_attr_score?: number | null;
+  match_breakdown?: Record<string, { weight: number; match: number }> | null;
 }
 
 export type ScanCategory = 'earring' | 'stud' | 'jhumka' | 'bracelet' | 'pendant_set';
@@ -217,6 +221,11 @@ export interface VisualSearchDescriptor {
   embedding_text?: string | null;
   attributes?: JewelryAttributes | null;
   values?: number[];
+  // Present on the scored (POST) variant
+  cosine?: number;
+  attr_score?: number | null;
+  breakdown?: Record<string, { weight: number; match: number }> | null;
+  score?: number;
 }
 
 export interface SearchTelemetry {
@@ -259,6 +268,13 @@ export interface VisualSearchResponse {
   rejection_reason?: string;
   filter_warning?: string | null;
   query_vector?: number[];
+  rank_version?: string;
+  candidates_considered?: number;
+  /** #1 and #2 are too close to call. */
+  uncertain?: boolean;
+  ai_category_guess?: string | null;
+  /** Set when a chip is selected but the AI read the photo as a different category. */
+  category_hint_warning?: string | null;
 }
 
 export interface VisualSearchBackfillResponse {
