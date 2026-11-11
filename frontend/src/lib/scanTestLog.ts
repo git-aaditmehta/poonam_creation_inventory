@@ -8,7 +8,9 @@
  */
 import type { JewelryAttributes, ScanCategory } from '../types';
 
-const STORAGE_KEY = 'visual_search_test_log_v1';
+const STORAGE_KEY = 'visual_search_test_log_v1'; // Llama (cloud) section
+/** Separate storage for the on-device DINOv2 section: the two test sessions never mix. */
+export const DINO_STORAGE_KEY = 'visual_search_dino_test_log_v1';
 const MAX_RECORDS = 300;
 
 export type ScanOutcome =
@@ -41,6 +43,8 @@ export interface ScanSelection {
 
 export interface ScanTestRecord {
   id: string;
+  /** Which feature produced this scan (missing = 'llama', for records saved before DINO existed). */
+  pipeline?: 'llama' | 'dino';
   n: number;
   ts: string;
   source: 'camera' | 'gallery';
@@ -57,6 +61,14 @@ export interface ScanTestRecord {
     vision_attempts?: number;
     prompt_tokens?: number | null;
     completion_tokens?: number | null;
+    // On-device (DINO) only
+    preprocess_ms?: number;
+    inference_ms?: number;
+    compute_backend?: 'webgpu' | 'wasm';
+    /** Set on the first scan after the model was loaded in this session. */
+    model_load_ms?: number;
+    model_from_cache?: boolean;
+    model_download_ms?: number;
   };
   rejected: boolean;
   ai_attributes: JewelryAttributes | null;
@@ -72,9 +84,9 @@ export interface ScanTestRecord {
   error: string | null;
 }
 
-export function loadScanLog(): ScanTestRecord[] {
+export function loadScanLog(key: string = STORAGE_KEY): ScanTestRecord[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -84,18 +96,18 @@ export function loadScanLog(): ScanTestRecord[] {
 }
 
 /** Returns false if the browser refused to save (private mode, storage full). */
-export function saveScanLog(records: ScanTestRecord[]): boolean {
+export function saveScanLog(records: ScanTestRecord[], key: string = STORAGE_KEY): boolean {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(-MAX_RECORDS)));
+    localStorage.setItem(key, JSON.stringify(records.slice(-MAX_RECORDS)));
     return true;
   } catch {
     return false;
   }
 }
 
-export function clearScanLog(): void {
+export function clearScanLog(key: string = STORAGE_KEY): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(key);
   } catch {
     /* ignore */
   }
@@ -202,7 +214,14 @@ export interface ScanSummary {
     vision: LatencyStats;
     embedding: LatencyStats;
     vectorize: LatencyStats;
+    // On-device (DINO)
+    preprocess: LatencyStats;
+    inference: LatencyStats;
+    modelLoadFirst: LatencyStats;
+    modelLoadCached: LatencyStats;
   };
+  /** Count of scans per on-device compute backend (DINO). */
+  backends: { webgpu: number; wasm: number };
   avgPromptTokens: number | null;
   avgCompletionTokens: number | null;
   retries: number;
@@ -270,6 +289,14 @@ export function summarize(records: ScanTestRecord[]): ScanSummary {
       vision: latencyStats(records.filter(ok).map((r) => r.telemetry.vision_ms)),
       embedding: latencyStats(records.filter(ok).map((r) => r.telemetry.embedding_ms)),
       vectorize: latencyStats(records.filter(ok).map((r) => r.telemetry.vectorize_ms)),
+      preprocess: latencyStats(records.filter(ok).map((r) => r.telemetry.preprocess_ms)),
+      inference: latencyStats(records.filter(ok).map((r) => r.telemetry.inference_ms)),
+      modelLoadFirst: latencyStats(records.filter((r) => r.telemetry.model_from_cache === false).map((r) => r.telemetry.model_load_ms)),
+      modelLoadCached: latencyStats(records.filter((r) => r.telemetry.model_from_cache === true).map((r) => r.telemetry.model_load_ms)),
+    },
+    backends: {
+      webgpu: records.filter((r) => r.telemetry.compute_backend === 'webgpu').length,
+      wasm: records.filter((r) => r.telemetry.compute_backend === 'wasm').length,
     },
     avgPromptTokens: mean(records.map((r) => r.telemetry.prompt_tokens).filter((x): x is number => typeof x === 'number')),
     avgCompletionTokens: mean(records.map((r) => r.telemetry.completion_tokens).filter((x): x is number => typeof x === 'number')),

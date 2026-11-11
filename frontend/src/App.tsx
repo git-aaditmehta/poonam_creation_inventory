@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { api } from './api';
 import type { User, InventoryCategory, BaseInventoryItem } from './types';
 import { ToastProvider, useToast } from './context/ToastContext';
@@ -21,6 +21,7 @@ import { CostingView } from './components/CostingView';
 import { CostingMaterialsView } from './components/CostingMaterialsView';
 import { SyncStatusBar } from './components/SyncStatusBar';
 import { ScanJewelryView } from './components/ScanJewelryView';
+const ScanDinoView = lazy(() => import('./components/ScanDinoView').then((m) => ({ default: m.ScanDinoView })));
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
@@ -222,6 +223,14 @@ const AppContent: React.FC = () => {
             user={currentUser}
             onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}
           />
+        )}
+        {activeTab === 'scan-dino' && (
+          <Suspense fallback={<div style={{ padding: 24, textAlign: 'center' }}>Loading Scan DINO…</div>}>
+            <ScanDinoView
+              user={currentUser}
+              onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}
+            />
+          </Suspense>
         )}
         {activeTab === 'operations' && (
           <StockOperationsView

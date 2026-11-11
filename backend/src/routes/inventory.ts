@@ -290,6 +290,13 @@ function createCategoryRoutes(config: CategoryConfig) {
           // Non-fatal: vector may not exist if item was never embedded
         }
       }
+
+      // On-device (DINOv2) visual search: drop its vector + record too. Non-fatal and isolated:
+      // a failure here never blocks the delete.
+      if (c.env.VECTORIZE_DINO) {
+        try { await c.env.VECTORIZE_DINO.deleteByIds([itemId]); } catch { /* not learned yet */ }
+      }
+      try { await c.env.DB.prepare('DELETE FROM dino_embeddings WHERE item_uuid = ?').bind(itemId).run(); } catch { /* table may not exist */ }
     }
 
     const result = await c.env.DB.prepare(

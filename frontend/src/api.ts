@@ -19,6 +19,11 @@ import type {
   VisualSearchStatusResponse,
   VisualSearchDescriptor,
   ScanCategory,
+  DinoStatusResponse,
+  DinoPendingResponse,
+  DinoEmbedResponse,
+  DinoSearchResponse,
+  DinoDescriptor,
 } from './types';
 
 class ApiError extends Error {
@@ -39,6 +44,11 @@ const API_BASE_URL = (
     ? ''
     : (import.meta.env.VITE_API_URL || '')
 ).replace(/\/+$/, '');
+
+/** Absolute URL for an API path (same-origin /api on Vercel, VITE_API_URL elsewhere). */
+export function apiUrl(path: string): string {
+  return path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
+}
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
@@ -318,5 +328,27 @@ export const api = {
       }),
     getStatus: () =>
       request<VisualSearchStatusResponse>('/api/visual-search/status'),
+  },
+
+  // On-device DINOv2 visual search — separate feature, separate endpoints (no Workers AI)
+  visualSearchDino: {
+    status: () => request<DinoStatusResponse>('/api/visual-search-dino/status'),
+    pending: () => request<DinoPendingResponse>('/api/visual-search-dino/pending'),
+    embed: (modelVersion: string, items: { id: string; vector: number[] }[]) =>
+      request<DinoEmbedResponse>('/api/visual-search-dino/embed', {
+        method: 'POST',
+        body: JSON.stringify({ model_version: modelVersion, items }),
+      }),
+    search: (modelVersion: string, vector: number[], category?: ScanCategory | null) =>
+      request<DinoSearchResponse>('/api/visual-search-dino/search', {
+        method: 'POST',
+        body: JSON.stringify({ model_version: modelVersion, vector, ...(category ? { category } : {}) }),
+      }),
+    descriptor: (id: string) =>
+      request<DinoDescriptor>(`/api/visual-search-dino/descriptor/${encodeURIComponent(id)}`),
+    reindexReset: () =>
+      request<{ success: boolean; reset: number; model_version: string }>('/api/visual-search-dino/reindex-reset', {
+        method: 'POST',
+      }),
   },
 };

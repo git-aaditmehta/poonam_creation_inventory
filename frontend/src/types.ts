@@ -290,3 +290,68 @@ export interface VisualSearchStatusResponse {
   };
 }
 
+
+// ─── On-device Visual Search (DINOv2) — separate feature ─────────────
+
+export interface DinoStatusResponse {
+  success: boolean;
+  model_version: string;
+  dimensions: number;
+  with_images: number;
+  indexed: number;
+  pending: number;
+  index_configured: boolean;
+}
+
+export interface DinoPendingItem {
+  id: string;
+  item_id: string;
+  image_key: string;
+  updated_at: string;
+}
+
+export interface DinoPendingResponse {
+  success: boolean;
+  model_version: string;
+  items: DinoPendingItem[];
+}
+
+export interface DinoEmbedResponse {
+  success: boolean;
+  embedded: number;
+  skipped: { id: string; reason: string }[];
+}
+
+export interface DinoMatch {
+  id: string;
+  item_id: string;
+  quantity: number;
+  unit: string;
+  low_stock_threshold: number;
+  is_low_stock: boolean;
+  image_key: string | null;
+  thumb_key: string | null;
+  score: number;
+  created_at: string;
+  updated_at: string;
+  cost_price?: number;
+  match_category: string | null;
+  match_model_version: string | null;
+}
+
+export interface DinoSearchResponse {
+  success: boolean;
+  model_version: string;
+  category_filter: ScanCategory | null;
+  matches: DinoMatch[];
+  filter_warning: string | null;
+  telemetry: { vectorize_ms: number; db_ms: number; total_ms: number; matches_found: number };
+}
+
+export interface DinoDescriptor {
+  success: boolean;
+  indexed: boolean;
+  category: string | null;
+  model_version: string | null;
+  values: number[] | null;
+}

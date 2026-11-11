@@ -10,6 +10,7 @@ import backup from './routes/backup';
 import excel from './routes/excel';
 import sync from './routes/sync';
 import visualSearch from './routes/visual-search';
+import visualSearchDino from './routes/visual-search-dino';
 
 const app = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
@@ -50,6 +51,7 @@ app.route('/api/backup', backup);
 app.route('/api/excel', excel);
 app.route('/api/sync', sync);
 app.route('/api/visual-search', visualSearch);
+app.route('/api/visual-search-dino', visualSearchDino);
 
 // Catch-all 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

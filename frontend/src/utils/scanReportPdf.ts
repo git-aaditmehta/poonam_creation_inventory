@@ -52,7 +52,12 @@ function outcomeText(r: ScanTestRecord): string {
   return OUTCOME_LABEL[r.outcome];
 }
 
-export function generateScanTestReport(records: ScanTestRecord[]): void {
+/**
+ * variant 'llama' = cloud Llama + BGE section (default, unchanged)
+ * variant 'dino'  = on-device DINOv2 section (no tokens/neurons/attributes/rejections; adds on-device timings)
+ */
+export function generateScanTestReport(records: ScanTestRecord[], variant: 'llama' | 'dino' = 'llama'): void {
+  const isDino = variant === 'dino';
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const margin = 36;
   const s = summarize(records);
@@ -87,7 +92,7 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
   const versions = Array.from(new Set(records.map((r) => r.prompt_version || 'unknown'))).join(', ');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.text('Visual Search Test Report', margin, y);
+  doc.text(isDino ? 'Visual Search Test Report - On-device DINOv2' : 'Visual Search Test Report', margin, y);
   y += 18;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
@@ -95,7 +100,13 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
   const last = records[records.length - 1]?.ts ? new Date(records[records.length - 1].ts).toLocaleString() : '-';
   doc.text(`Generated: ${new Date().toLocaleString()}   |   Scans: ${first} to ${last}`, margin, y);
   y += 12;
-  doc.text(`Pipeline: Llama 3.2 11B Vision (JSON) + BGE-small 384   |   Prompt version(s): ${versions}`, margin, y);
+  doc.text(
+    isDino
+      ? `Pipeline: DINOv2-small (ONNX fp32) on the device, 224px padded square, CLS 384 -> Vectorize   |   Model version(s): ${versions}`
+      : `Pipeline: Llama 3.2 11B Vision (JSON) + BGE-small 384   |   Prompt version(s): ${versions}`,
+    margin,
+    y
+  );
   y += 12;
   doc.text(`Device: ${navigator.userAgent.slice(0, 120)}`, margin, y);
   y += 16;
@@ -106,14 +117,22 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
     [['Metric', 'Result', 'Notes']],
     [
       ['Total scans', s.total, `${s.marked} marked, ${s.unmarked} not marked, ${s.errors} errors`],
-      ['Catalog scans with known answer', s.catalogScans, 'Found + Not in top 6 + Wrongly rejected'],
+      ['Catalog scans with known answer', s.catalogScans, isDino ? 'Found + Not in top 6' : 'Found + Not in top 6 + Wrongly rejected'],
       ['Rank #1', pct(s.rank1, s.catalogScans), 'Correct item was the first result'],
       ['Top 3', pct(s.top3, s.catalogScans), ''],
       ['Top 6', pct(s.top6, s.catalogScans), ''],
       ['Not in top 6', s.notInTop6, ''],
-      ['Wrongly rejected (real piece called not-jewelry)', s.falseReject, ''],
-      ['Correctly rejected (non-jewelry)', s.trueReject, ''],
-      ['Non-catalog object still matched', s.falseAccept, 'Should have been rejected'],
+      ...(isDino
+        ? []
+        : [
+            ['Wrongly rejected (real piece called not-jewelry)', s.falseReject, ''],
+            ['Correctly rejected (non-jewelry)', s.trueReject, ''],
+          ]),
+      [
+        'Non-catalog object still matched',
+        s.falseAccept,
+        isDino ? 'DINO has no jewelry check; see #1 scores below to set a cut-off' : 'Should have been rejected',
+      ],
       ['With category chip: rank #1 / top 6', `${pct(s.withChip.rank1, s.withChip.scans)} / ${pct(s.withChip.top6, s.withChip.scans)}`, ''],
       ['Without chip: rank #1 / top 6', `${pct(s.withoutChip.rank1, s.withoutChip.scans)} / ${pct(s.withoutChip.top6, s.withoutChip.scans)}`, ''],
     ],
@@ -125,13 +144,23 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
   const latRow = (label: string, l: LatencyStats) => [label, ms(l.avg), ms(l.median), ms(l.p95), ms(l.max)];
   table(
     [['Stage', 'Average', 'Median', 'P95', 'Max']],
-    [
-      latRow('Phone round trip (tap to results)', s.latency.roundTrip),
-      latRow('Server pipeline total', s.latency.serverTotal),
-      latRow('Vision (Llama)', s.latency.vision),
-      latRow('Embedding (BGE)', s.latency.embedding),
-      latRow('Vectorize query', s.latency.vectorize),
-    ]
+    isDino
+      ? [
+          latRow('Phone round trip (tap to results)', s.latency.roundTrip),
+          latRow('On device: prepare photo', s.latency.preprocess),
+          latRow('On device: DINOv2 model', s.latency.inference),
+          latRow('Server search total', s.latency.serverTotal),
+          latRow('Vectorize query', s.latency.vectorize),
+          latRow('Model load, first time (download + start)', s.latency.modelLoadFirst),
+          latRow('Model load, from phone cache', s.latency.modelLoadCached),
+        ]
+      : [
+          latRow('Phone round trip (tap to results)', s.latency.roundTrip),
+          latRow('Server pipeline total', s.latency.serverTotal),
+          latRow('Vision (Llama)', s.latency.vision),
+          latRow('Embedding (BGE)', s.latency.embedding),
+          latRow('Vectorize query', s.latency.vectorize),
+        ]
   );
 
   // ── Diagnostics ──
@@ -139,9 +168,16 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
   table(
     [['Metric', 'Value']],
     [
-      ['Avg vision prompt tokens (image + prompt)', num(s.avgPromptTokens, 0)],
-      ['Avg vision output tokens', num(s.avgCompletionTokens, 0)],
-      ['Scans that needed a JSON retry', s.retries],
+      ...(isDino
+        ? [
+            ['Compute on device', `GPU (WebGPU): ${s.backends.webgpu} scans, CPU (WASM): ${s.backends.wasm} scans`],
+            ['Workers AI neurons used', '0 (the model runs on the device)'],
+          ]
+        : [
+            ['Avg vision prompt tokens (image + prompt)', num(s.avgPromptTokens, 0)],
+            ['Avg vision output tokens', num(s.avgCompletionTokens, 0)],
+            ['Scans that needed a JSON retry', s.retries],
+          ]),
       ['Avg #1 score when #1 was correct', num(s.top1ScoreWhenCorrect)],
       ['Avg #1 score when #1 was wrong', num(s.top1ScoreWhenWrong)],
       ['Avg score of the correct item', num(s.avgCorrectItemScore)],
@@ -149,10 +185,10 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
     { columnStyles: { 0: { cellWidth: 260 } } }
   );
 
-  // ── AI usage (neurons) ──
-  heading('4. AI usage (neurons, estimated)');
+  // ── AI usage (neurons) — Llama only ──
   const n = s.neurons;
-  table(
+  if (!isDino) heading('4. AI usage (neurons, estimated)');
+  if (!isDino) table(
     [['Metric', 'Value']],
     [
       ['Scans with token counts', `${n.scansWithTokens} of ${s.total}${n.scansWithoutTokens ? ` (${n.scansWithoutTokens} had no token data)` : ''}`],
@@ -169,9 +205,11 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
   );
 
   // ── Overview ──
-  heading('5. All scans');
+  heading(isDino ? '4. All scans' : '5. All scans');
+  const overviewHead = ['#', 'Time', 'Chip', 'Outcome', 'Correct item', 'Its score', '#1 result', '#1 score', 'Total'];
+  if (!isDino) overviewHead.push('Neurons');
   table(
-    [['#', 'Time', 'Chip', 'Outcome', 'Correct item', 'Its score', '#1 result', '#1 score', 'Total', 'Neurons']],
+    [overviewHead],
     records.map((r) => [
       r.n,
       new Date(r.ts).toLocaleTimeString(),
@@ -182,17 +220,34 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
       r.matches[0]?.item_id || '-',
       num(r.matches[0]?.score),
       ms(r.client_round_trip_ms),
-      num(estimateNeurons(r)?.total, 1),
+      ...(isDino ? [] : [num(estimateNeurons(r)?.total, 1)]),
     ])
   );
 
   // ── Per-scan details ──
   doc.addPage();
   y = margin;
-  heading('6. Scan details');
+  heading(isDino ? '5. Scan details' : '6. Scan details');
   for (const r of records) {
     heading(`Scan #${r.n}  -  ${outcomeText(r)}${r.category_filter ? `  -  chip: ${r.category_filter}` : ''}`, 10);
-    const info: (string | number)[][] = [
+    const info: (string | number)[][] = isDino
+      ? [
+          ['Time / source', `${new Date(r.ts).toLocaleString()} / ${r.source}`],
+          ['Photo used', `${r.image.width}x${r.image.height} (padded to a square, scaled to 224x224 on the device)`],
+          [
+            'Latency',
+            `round trip ${ms(r.client_round_trip_ms)} | prepare ${ms(r.telemetry.preprocess_ms)} | model ${ms(r.telemetry.inference_ms)} | server ${ms(r.telemetry.total_pipeline_ms)} | vectorize ${ms(r.telemetry.vectorize_ms)} | db ${ms(r.telemetry.db_ms)}`,
+          ],
+          [
+            'Device',
+            `${r.telemetry.compute_backend === 'webgpu' ? 'GPU (WebGPU)' : r.telemetry.compute_backend === 'wasm' ? 'CPU (WASM)' : '-'}${
+              typeof r.telemetry.model_load_ms === 'number'
+                ? ` | model load ${ms(r.telemetry.model_load_ms)} (${r.telemetry.model_from_cache ? 'from phone cache' : `downloaded in ${ms(r.telemetry.model_download_ms)}`})`
+                : ''
+            }`,
+          ],
+        ]
+      : [
       ['Time / source', `${new Date(r.ts).toLocaleString()} / ${r.source}`],
       ['Image sent', `${r.image.width}x${r.image.height}, ${Math.round(r.image.bytes / 1024)} KB`],
       [
@@ -215,7 +270,7 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
     if (r.reason) info.push(['Your note', r.reason]);
     if (r.filter_warning) info.push(['Filter warning', r.filter_warning]);
     if (r.error) info.push(['Error', r.error]);
-    if (r.error || !r.ai_attributes) info.push(['Raw vision output', (r.raw_vision_output || '-').slice(0, 600)]);
+    if (!isDino && (r.error || !r.ai_attributes)) info.push(['Raw vision output', (r.raw_vision_output || '-').slice(0, 600)]);
     table(undefined, info, { columnStyles: { 0: { cellWidth: 110, fontStyle: 'bold' } } });
 
     if (r.ai_attributes) {
@@ -253,5 +308,5 @@ export function generateScanTestReport(records: ScanTestRecord[]): void {
     y += 6;
   }
 
-  doc.save(`visual-search-test-report-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`);
+  doc.save(`${isDino ? 'dino' : 'visual-search'}-test-report-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`);
 }

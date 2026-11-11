@@ -25,6 +25,10 @@
 		{
 			"binding": "VECTORIZE",
 			"index_name": "jewelry-embeddings"
+		},
+		{
+			"binding": "VECTORIZE_DINO",
+			"index_name": "jewelry-dinov2-384"
 		}
 	]
 }

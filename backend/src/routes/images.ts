@@ -121,6 +121,10 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     updated_at: nowIso,
   });
 
+  // On-device (DINOv2) visual search: a new photo must be re-learned → mark it waiting.
+  // Non-fatal and isolated: never blocks the upload.
+  try { await c.env.DB.prepare('DELETE FROM dino_embeddings WHERE item_uuid = ?').bind(itemId).run(); } catch { /* table may not exist */ }
+
   // ── Auto-Embed: shared v2 pipeline (Vision JSON → canonical text → BGE-small) ──
   // Non-blocking: embedding failure does not prevent image upload success (backfill retries it).
   let embeddingStatus: 'success' | 'skipped' | 'failed' = 'skipped';

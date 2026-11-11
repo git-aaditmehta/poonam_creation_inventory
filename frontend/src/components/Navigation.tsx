@@ -23,6 +23,7 @@ import {
   IndianRupee,
   Boxes,
   Camera,
+  Cpu,
 } from 'lucide-react';
 import type { User } from '../types';
 import type { SyncStatus } from '../lib/syncEngine';
@@ -33,6 +34,7 @@ export type ActiveTab =
   | 'stones'
   | 'foil'
   | 'scan'
+  | 'scan-dino'
   | 'operations'
   | 'costing'
   | 'costing-materials'
@@ -183,6 +185,14 @@ export const Navigation: React.FC<NavigationProps> = ({
             >
               <Camera size={18} />
               <span>Scan Jewelry</span>
+            </button>
+            <button
+              className={`nav-item ${activeTab === 'scan-dino' ? 'active' : ''}`}
+              onClick={() => handleTabClick('scan-dino')}
+              title="Scan DINO (on-device visual search, test)"
+            >
+              <Cpu size={18} />
+              <span>Scan DINO</span>
             </button>
             <button
               className={`nav-item ${activeTab === 'operations' ? 'active' : ''}`}
@@ -417,6 +427,13 @@ export const Navigation: React.FC<NavigationProps> = ({
           <span>Scan</span>
         </button>
         <button
+          className={`mobile-nav-btn ${activeTab === 'scan-dino' ? 'active' : ''}`}
+          onClick={() => setActiveTab('scan-dino')}
+        >
+          <Cpu size={18} />
+          <span>DINO</span>
+        </button>
+        <button
           className={`mobile-nav-btn ${activeTab === 'operations' ? 'active' : ''}`}
           onClick={() => setActiveTab('operations')}
         >
@@ -477,6 +494,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             {activeTab === 'stones' && 'Kundan Stone'}
             {activeTab === 'foil' && 'Silver & Metal Foil'}
             {activeTab === 'scan' && 'Scan Jewelry'}
+            {activeTab === 'scan-dino' && 'Scan DINO'}
             {activeTab === 'operations' && 'Stock Operations'}
             {activeTab === 'costing' && 'Private Jewelry Costing'}
             {activeTab === 'costing-materials' && 'Raw Materials & Categories'}
