@@ -547,6 +547,9 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     stopLearnRef.current = false;
     setLearnErrors([]);
     writeLearningFlag(true);
+    // The live camera holds a lot of memory on phones; free it while photos are being learned
+    const cameraWasOn = cameraActive;
+    if (cameraWasOn) stopCamera();
     try {
       await loadDino((loaded, total) => setModelProgress({ loaded, total }));
       const { items } = await api.visualSearchDino.pending();
@@ -597,8 +600,9 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       writeLearningFlag(false);
       setIsLearning(false);
       fetchStatus();
+      if (cameraWasOn) startCamera(facingMode);
     }
-  }, [isOwner, isLearning, fetchStatus, showToast]);
+  }, [isOwner, isLearning, fetchStatus, showToast, cameraActive, stopCamera, startCamera, facingMode]);
 
   // New uploads: when the owner opens this tab and the model is ready, learn waiting items automatically.
   useEffect(() => {

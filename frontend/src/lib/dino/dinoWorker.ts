@@ -1,6 +1,11 @@
 /// <reference lib="webworker" />
 /**
- * DINOv2 Web Worker — keeps the 88 MB model and inference off the UI thread.
+ * DINOv2 Web Worker — keeps the model and inference off the UI thread.
+ *
+ * Uses the CPU-only ONNX Runtime build (ort-wasm-simd-threaded.wasm, 15 MB). The WebGPU build (29.5 MB)
+ * was used before although inference was always forced onto the CPU; just compiling it pushed Safari's
+ * page process to ~1 GB (measured: 968 MB vs 484 MB in WebKit, 80 photos) and iPhone Safari reloaded the
+ * tab. Fingerprints are bit-identical between the two builds (same CPU kernels), so no re-learning is needed.
  *
  * Messages in:
  *   { type: 'load', id, modelUrl, sha256, cacheName, expectedBytes }
@@ -11,21 +16,20 @@
  *   { type: 'embedded', id, vector: Float32Array(384), inferenceMs }
  *   { type: 'error', id, message }
  */
-import * as ort from 'onnxruntime-web/webgpu';
-import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm?url';
-import wasmMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs?url';
+import * as ort from 'onnxruntime-web/wasm';
+import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
+import wasmMjsUrl from 'onnxruntime-web/ort-wasm-simd-threaded.mjs?url';
 
 declare const self: DedicatedWorkerGlobalScope;
 
 let session: ort.InferenceSession | null = null;
-let backend: 'webgpu' | 'wasm' | null = null;
+const backend = 'wasm' as const;
 let loading: Promise<void> | null = null;
-let forceWasm = false; // set by the load message (e.g. int8 model: runs best on the CPU kernels)
 
 /**
  * iPhone/iPad (all iOS browsers are WebKit) and desktop Safari: Safari kills a tab that uses too much
- * memory, and its WebGPU + multi-threaded WASM support is the least stable. On WebKit we therefore
- * use single-threaded WASM on the CPU; Chrome/Android/desktop keep WebGPU with multi-threaded fallback.
+ * memory, so WebKit runs single-threaded. Chrome/Android/desktop may use a few threads when the page is
+ * cross-origin isolated.
  */
 const ua = navigator.userAgent;
 const isWebKit = /iPhone|iPad|iPod/.test(ua) || (/Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|Android/.test(ua));
@@ -114,27 +118,10 @@ async function getModelBytes(
 }
 
 async function createSession(bytes: ArrayBuffer): Promise<void> {
-  const hasWebGPU = !isWebKit && !forceWasm && typeof (navigator as any).gpu !== 'undefined';
-  if (hasWebGPU) {
-    try {
-      const adapter = await (navigator as any).gpu.requestAdapter();
-      if (adapter) {
-        session = await ort.InferenceSession.create(new Uint8Array(bytes), {
-          executionProviders: ['webgpu'],
-          graphOptimizationLevel: 'all',
-        });
-        backend = 'webgpu';
-        return;
-      }
-    } catch (e) {
-      console.warn('[DINO] WebGPU unavailable, falling back to WASM:', e);
-    }
-  }
   session = await ort.InferenceSession.create(new Uint8Array(bytes), {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
   });
-  backend = 'wasm';
 }
 
 self.onmessage = async (ev: MessageEvent) => {
@@ -145,7 +132,6 @@ self.onmessage = async (ev: MessageEvent) => {
       let info = { fromCache: true, downloadMs: 0 };
       if (!session) {
         if (!loading) {
-          forceWasm = Boolean(msg.forceWasm);
           loading = (async () => {
             const r = await getModelBytes(msg.modelUrl, msg.sha256, msg.cacheName, msg.expectedBytes);
             info = { fromCache: r.fromCache, downloadMs: r.downloadMs };
