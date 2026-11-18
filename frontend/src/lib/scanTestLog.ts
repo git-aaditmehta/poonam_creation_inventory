@@ -95,7 +95,24 @@ export interface ScanTestRecord {
   error: string | null;
 }
 
+/**
+ * One-time clear of the DINO test report on every device (agreed 2026-11-18: the scans so far were tests
+ * against the wiped catalog). The report feature itself is unchanged; this runs once per browser.
+ */
+const DINO_LOG_RESET_MARKER = 'dino_test_log_cleared_2026_11_18';
+
+function resetDinoLogOnce(): void {
+  try {
+    if (localStorage.getItem(DINO_LOG_RESET_MARKER)) return;
+    localStorage.removeItem(DINO_STORAGE_KEY);
+    localStorage.setItem(DINO_LOG_RESET_MARKER, new Date().toISOString());
+  } catch {
+    /* storage blocked: nothing stored to clear */
+  }
+}
+
 export function loadScanLog(key: string = STORAGE_KEY): ScanTestRecord[] {
+  if (key === DINO_STORAGE_KEY) resetDinoLogOnce();
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return [];

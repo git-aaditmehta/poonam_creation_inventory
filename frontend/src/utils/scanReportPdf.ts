@@ -6,6 +6,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { JewelryAttributes } from '../types';
 import { estimateNeurons, NEURON_RATES, summarize, type LatencyStats, type ScanTestRecord } from '../lib/scanTestLog';
+import { formatIST } from './time';
 
 const ATTRIBUTE_FIELDS: (keyof JewelryAttributes)[] = [
   'category',
@@ -117,9 +118,9 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
   y += 18;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  const first = records[0]?.ts ? new Date(records[0].ts).toLocaleString() : '-';
-  const last = records[records.length - 1]?.ts ? new Date(records[records.length - 1].ts).toLocaleString() : '-';
-  doc.text(`Generated: ${new Date().toLocaleString()}   |   Scans: ${first} to ${last}`, margin, y);
+  const first = records[0]?.ts ? formatIST(records[0].ts) : '-';
+  const last = records[records.length - 1]?.ts ? formatIST(records[records.length - 1].ts) : '-';
+  doc.text(`Generated: ${formatIST(new Date())} IST   |   Scans: ${first} to ${last}`, margin, y);
   y += 12;
   doc.text(
     isDino
@@ -246,7 +247,7 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
     [overviewHead],
     records.map((r) => [
       r.n,
-      new Date(r.ts).toLocaleTimeString(),
+      formatIST(r.ts),
       r.category_filter || '-',
       outcomeText(r),
       r.selection?.item_id || '-',
@@ -266,7 +267,7 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
     heading(`Scan #${r.n}  -  ${outcomeText(r)}${r.category_filter ? `  -  chip: ${r.category_filter}` : ''}`, 10);
     const info: (string | number)[][] = isDino
       ? [
-          ['Time / source', `${new Date(r.ts).toLocaleString()} / ${r.source}`],
+          ['Time / source (IST)', `${formatIST(r.ts)} / ${r.source}`],
           ['Photo used', `${r.image.width}x${r.image.height} (padded to a square, scaled to 224x224 on the device)`],
           [
             'Latency',
@@ -282,7 +283,7 @@ export function generateScanTestReport(records: ScanTestRecord[], variant: 'llam
           ],
         ]
       : [
-      ['Time / source', `${new Date(r.ts).toLocaleString()} / ${r.source}`],
+      ['Time / source (IST)', `${formatIST(r.ts)} / ${r.source}`],
       ['Image sent', `${r.image.width}x${r.image.height}, ${Math.round(r.image.bytes / 1024)} KB`],
       [
         'Latency',

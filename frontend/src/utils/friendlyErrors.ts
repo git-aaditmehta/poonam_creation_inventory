@@ -75,7 +75,8 @@ export function parseFriendlyError(
   const refCode = generateErrorRef();
   const rawDetails = err?.stack || JSON.stringify(err, null, 2) || rawMsg;
 
-  // 1. Offline / Network Connectivity Loss
+  // 1. No internet. Adding, editing or deleting items and photo uploads only work online (agreed rule):
+  //    nothing was saved, and the message must say so — never "saved on this device".
   if (
     !navigator.onLine ||
     rawMsg.includes('Failed to fetch') ||
@@ -85,27 +86,30 @@ export function parseFriendlyError(
     rawMsg.includes('Load failed')
   ) {
     return {
-      title: 'Working Offline — Safe & Saved',
-      message: `Your changes are safely saved on this device.`,
-      solution: `Once your internet connection restores, the system will automatically upload your data to the cloud. You can also click "Sync Now" anytime.`,
+      title: 'No internet connection',
+      message: `${context.itemId ? `"${context.itemId}"` : 'This change'} was not saved: this needs internet.`,
+      solution: 'Connect to the internet and try again. Stock in/out still works offline.',
       isOffline: true,
       refCode,
       rawDetails,
     };
   }
 
-  // 2. Duplicate Item ID (HTTP 409 Conflict)
+  // 2. Duplicate Item ID (HTTP 409 Conflict). The server's message names the existing item
+  //    (IDs that differ only in capitals, spaces or dashes are the same item).
   if (
     status === 409 ||
     rawMsg.toLowerCase().includes('already exists') ||
     rawMsg.toLowerCase().includes('unique constraint') ||
     rawMsg.toLowerCase().includes('duplicate')
   ) {
-    const idMention = context.itemId ? `"${context.itemId}"` : 'entered';
+    const idMention = context.itemId ? `"${context.itemId}"` : 'This ID';
     return {
-      title: 'Item ID Already in Use',
-      message: `An item with the ID ${idMention} is already saved in your ${context.categoryName || 'catalog'}.`,
-      solution: `Please enter a different, unique Item ID. If you just want to update quantity, please use the "Add Stock" operation instead.`,
+      title: 'Item ID already in use',
+      message: rawMsg.toLowerCase().includes('already exists')
+        ? rawMsg
+        : `${idMention} is already used in ${context.categoryName || 'this category'}. IDs that differ only in capitals, spaces or dashes are the same item.`,
+      solution: 'Use a different Item ID. To change the quantity of the existing item, use Stock Operations.',
       isDuplicate: true,
       refCode,
       rawDetails,
@@ -123,12 +127,16 @@ export function parseFriendlyError(
     };
   }
 
-  // 4. Session / Authentication Timeout (HTTP 401 / 403)
+  // 4. Login no longer valid (HTTP 401 / 403)
   if (status === 401 || status === 403 || rawMsg.toLowerCase().includes('unauthorized') || rawMsg.toLowerCase().includes('authentication required')) {
     return {
-      title: 'Session Expired for Security',
-      message: `Your login session has timed out. Don't worry — your locally entered data on this computer is 100% safe.`,
-      solution: `Please sign in again to resume syncing your changes with the cloud.`,
+      title: status === 403 ? 'Not allowed' : 'Please sign in again',
+      message: status === 403
+        ? 'Your account is not allowed to do this. Only the owner can add, edit or delete items.'
+        : 'Your login is no longer valid, so this change was not saved.',
+      solution: status === 403
+        ? 'Ask the owner to make this change.'
+        : 'Sign in again. Stock changes waiting on this phone are kept and sent after you sign in.',
       refCode,
       rawDetails,
     };
@@ -145,24 +153,55 @@ export function parseFriendlyError(
     };
   }
 
-  // 6. Validation Error (Missing required fields)
+  // 6. The entry was refused (missing field, decimal where only whole numbers are allowed, …): show the
+  //    server's own reason in plain words
   if (status === 400 || rawMsg.toLowerCase().includes('validation') || rawMsg.toLowerCase().includes('required')) {
+    const readable = humanizeFieldNames(rawMsg.replace(/^[A-Z_]+:\s*/, ''));
     return {
-      title: 'Please Complete Required Fields',
-      message: rawMsg.replace(/^[A-Z_]+:\s*/, '') || 'Some required information is missing or formatted incorrectly.',
-      solution: `Check that all fields with red indicators have numbers and valid text entered, then click Save again.`,
+      title: 'Please check the entry',
+      message: readable || 'Some information is missing or not in the right format.',
+      solution: 'Correct the highlighted field and save again. Nothing was saved.',
       refCode,
       rawDetails,
     };
   }
 
-  // 7. Critical / Unforeseen Server Error (HTTP 500 / Cloudflare issues)
+  // 7. Unexpected server problem: say plainly that nothing was saved (no false "saved on this computer")
   return {
-    title: 'Cloud Backup Paused',
-    message: `An unexpected cloud server issue occurred during backup. Don't worry — your data is safely saved on this computer and has NOT been lost.`,
-    solution: `You can continue working normally. The system will automatically retry, or you can copy the diagnostic report below and share it with your developer.`,
+    title: 'Server problem — not saved',
+    message: `${context.itemId ? `"${context.itemId}"` : 'This change'} was not saved because of a server problem.`,
+    solution: 'Please try again in a moment. If it keeps happening, copy the report below and send it to your developer.',
     isCritical: true,
     refCode,
     rawDetails,
   };
+}
+
+/** Server messages name fields technically ("low_stock_threshold must be …"): make them readable. */
+function humanizeFieldNames(msg: string): string {
+  return msg
+    .replace(/\blow_stock_threshold\b/g, 'Low stock threshold')
+    .replace(/\bcost_price\b/g, 'Cost price')
+    .replace(/\bitem_id\b/g, 'Item ID')
+    .replace(/\bquantity\b/g, 'Quantity')
+    .replace(/\bunit\b/g, 'Unit');
+}
+
+/**
+ * One plain sentence for any error, for short messages (toasts): never "Failed to fetch" or a code.
+ * Used where an action failed and the person needs to know why and what to do.
+ */
+export function errorText(err: any): string {
+  const raw = String(err?.message || err?.error || err || '').trim();
+  const status = Number(err?.status || 0);
+  if (
+    (typeof navigator !== 'undefined' && !navigator.onLine) ||
+    /Failed to fetch|NetworkError|net::ERR_|Load failed|Network lost/i.test(raw)
+  ) {
+    return 'No internet connection. Connect and try again.';
+  }
+  if (status === 401) return 'Your login is no longer valid. Please sign in again.';
+  if (status === 403) return 'Only the owner can do this.';
+  if (status >= 500) return 'Server problem. Please try again in a moment.';
+  return humanizeFieldNames(raw) || 'Something went wrong. Please try again.';
 }

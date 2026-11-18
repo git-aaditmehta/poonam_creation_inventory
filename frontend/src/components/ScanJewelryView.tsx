@@ -34,6 +34,7 @@ import type {
   JewelryAttributes,
 } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 import {
   loadScanLog,
   saveScanLog,
@@ -411,7 +412,7 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       setCapturedPreview(img.dataUrl);
       performSearch(img, 'camera');
     } catch (err: any) {
-      showToast('error', 'Capture failed', err.message);
+      showToast('error', 'Capture failed', errorText(err));
     }
   };
 
@@ -432,7 +433,7 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
           setCapturedPreview(img.dataUrl);
           performSearch(img, 'gallery');
         } catch (err: any) {
-          showToast('error', 'Image processing failed', err.message);
+          showToast('error', 'Image processing failed', errorText(err));
         }
       };
       el.src = ev.target?.result as string;
@@ -634,7 +635,7 @@ export const ScanJewelryView: React.FC<ScanJewelryViewProps> = ({ user, onQuickO
       await fetchIndexStatus();
       runBackfill();
     } catch (err: any) {
-      showToast('error', 'Reset failed', err.message);
+      showToast('error', 'Reset failed', errorText(err));
     }
   };
 

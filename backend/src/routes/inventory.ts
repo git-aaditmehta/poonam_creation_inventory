@@ -9,6 +9,15 @@ import {
   rupeesToPaisa, paisaToRupees,
 } from '../utils/validation';
 import { logSyncChange } from '../utils/syncLog';
+import { isLowStock, LOW_STOCK_SQL } from '../utils/lowStock';
+import { ITEM_KEY_SQL, itemKey, isDuplicateIdError, duplicateIdMessage } from '../utils/itemId';
+
+const CATEGORY_NAME: Record<string, string> = {
+  plated_jewelry: 'Plated Jewelry',
+  raw_jewelry: 'Raw Jewelry',
+  stones: 'Kundan Stone',
+  foil: 'Foil',
+};
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -22,7 +31,7 @@ function mapItem(row: Record<string, unknown>, role: string, hasCost: boolean) {
     quantity: row.quantity,
     unit: row.unit,
     low_stock_threshold: row.low_stock_threshold,
-    is_low_stock: (row.quantity as number) < (row.low_stock_threshold as number),
+    is_low_stock: isLowStock(row.quantity as number, row.low_stock_threshold as number),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -64,8 +73,10 @@ function createCategoryRoutes(config: CategoryConfig) {
     const params: unknown[] = [];
 
     if (search) {
-      whereClause += ' AND item_id LIKE ?';
-      params.push(`%${search}%`);
+      // Also ignores capitals, spaces and dashes: "ps365" finds "PS-365"
+      const key = itemKey(search);
+      whereClause += key ? ` AND (item_id LIKE ? OR ${ITEM_KEY_SQL} LIKE ?)` : ' AND item_id LIKE ?';
+      params.push(`%${search}%`, ...(key ? [`%${key}%`] : []));
     }
 
     // Jewelry type chips (Plated / Raw only): ?category=earring|stud|jhumka|bracelet|pendant_set|other
@@ -160,11 +171,12 @@ function createCategoryRoutes(config: CategoryConfig) {
     if (errors.length > 0) return c.json({ errors }, 400);
 
     // Check for duplicate item_id
+    // Same item if the ID differs only in capitals, spaces or dashes
     const existing = await c.env.DB.prepare(
-      `SELECT id FROM ${config.table} WHERE item_id = ?`
-    ).bind(body.item_id.trim()).first();
+      `SELECT id, item_id FROM ${config.table} WHERE ${ITEM_KEY_SQL} = ?`
+    ).bind(itemKey(body.item_id)).first<{ id: string; item_id: string }>();
     if (existing) {
-      return c.json({ error: `Item with ID "${body.item_id}" already exists` }, 409);
+      return c.json({ error: duplicateIdMessage(body.item_id, existing.item_id, CATEGORY_NAME[config.table]) }, 409);
     }
 
     const id = generateId();
@@ -198,7 +210,13 @@ function createCategoryRoutes(config: CategoryConfig) {
       `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) VALUES (?, ?, 'CREATE', ?)`
     ).bind(config.table, id, JSON.stringify(createdItem));
 
-    await c.env.DB.batch([insertStmt, syncStmt]);
+    try {
+      await c.env.DB.batch([insertStmt, syncStmt]);
+    } catch (err) {
+      // Someone saved the same ID at the same moment: the database's unique rule stopped the second one
+      if (isDuplicateIdError(err)) return c.json({ error: duplicateIdMessage(body.item_id, null, CATEGORY_NAME[config.table]) }, 409);
+      throw err;
+    }
 
     return c.json({ success: true, id, item_id: body.item_id.trim(), item: createdItem }, 201);
   });
@@ -223,9 +241,9 @@ function createCategoryRoutes(config: CategoryConfig) {
       // Check uniqueness if changing item_id
       if (body.item_id.trim() !== existing.item_id) {
         const dup = await c.env.DB.prepare(
-          `SELECT id FROM ${config.table} WHERE item_id = ? AND id != ?`
-        ).bind(body.item_id.trim(), itemId).first();
-        if (dup) return c.json({ error: `Item ID "${body.item_id}" already exists` }, 409);
+          `SELECT id, item_id FROM ${config.table} WHERE ${ITEM_KEY_SQL} = ? AND id != ?`
+        ).bind(itemKey(body.item_id), itemId).first<{ id: string; item_id: string }>();
+        if (dup) return c.json({ error: duplicateIdMessage(body.item_id, dup.item_id, CATEGORY_NAME[config.table]) }, 409);
       }
       updates.push('item_id = ?');
       params.push(body.item_id.trim());
@@ -260,9 +278,14 @@ function createCategoryRoutes(config: CategoryConfig) {
     updates.push("updated_at = datetime('now')");
     params.push(itemId);
 
-    await c.env.DB.prepare(
-      `UPDATE ${config.table} SET ${updates.join(', ')} WHERE id = ?`
-    ).bind(...params).run();
+    try {
+      await c.env.DB.prepare(
+        `UPDATE ${config.table} SET ${updates.join(', ')} WHERE id = ?`
+      ).bind(...params).run();
+    } catch (err) {
+      if (isDuplicateIdError(err)) return c.json({ error: duplicateIdMessage(body.item_id, null, CATEGORY_NAME[config.table]) }, 409);
+      throw err;
+    }
 
     // Fetch updated item and log CDC change
     const updatedRow = await c.env.DB.prepare(
@@ -375,7 +398,7 @@ inventory.get('/low-stock', authMiddleware, ownerOnly, async (c) => {
   for (const cat of categories) {
     const results = await c.env.DB.prepare(
       `SELECT *, '${cat.name}' as category_name FROM ${cat.table}
-       WHERE is_deleted = 0 AND quantity < low_stock_threshold
+       WHERE is_deleted = 0 AND ${LOW_STOCK_SQL}
        ORDER BY (low_stock_threshold - quantity) DESC`
     ).all();
 

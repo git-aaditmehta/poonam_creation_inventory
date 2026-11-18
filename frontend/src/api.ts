@@ -300,6 +300,9 @@ export const api = {
       if (!key) return '';
       if (key.startsWith('blob:') || key.startsWith('data:')) return key;
       const base = `${API_BASE_URL}/api/images/${key}`;
+      // Versioned keys (new photos) already change when the photo changes: no extra parameter, so the link
+      // stays the same across stock movements and the cached copy keeps working (also offline).
+      if (/\/[0-9a-z]+-(full|thumb)$/.test(key)) return base;
       return timestamp ? `${base}?t=${encodeURIComponent(timestamp)}` : base;
     },
   },

@@ -11,6 +11,8 @@ import {
 import { api } from '../api';
 import type { StaffUser } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
+import { formatISTDate } from '../utils/time';
 
 export const StaffManagementView: React.FC = () => {
   const { showToast } = useToast();
@@ -36,7 +38,7 @@ export const StaffManagementView: React.FC = () => {
       const res = await api.auth.listStaff();
       setStaffList(res.staff);
     } catch (err: any) {
-      showToast('error', 'Failed to load staff list', err.message);
+      showToast('error', 'Failed to load staff list', errorText(err));
     } finally {
       setIsLoading(false);
     }
@@ -62,7 +64,7 @@ export const StaffManagementView: React.FC = () => {
       setNewPassword('');
       fetchStaff();
     } catch (err: any) {
-      showToast('error', 'Creation Failed', err.message);
+      showToast('error', 'Creation Failed', errorText(err));
     } finally {
       setIsCreating(false);
     }
@@ -75,7 +77,7 @@ export const StaffManagementView: React.FC = () => {
       showToast('success', 'Status Updated', `${staff.username} is now ${nextState ? 'Active' : 'Inactive'}`);
       fetchStaff();
     } catch (err: any) {
-      showToast('error', 'Update Failed', err.message);
+      showToast('error', 'Update Failed', errorText(err));
     }
   };
 
@@ -90,7 +92,7 @@ export const StaffManagementView: React.FC = () => {
       setIsResetOpen(false);
       setResetPasswordVal('');
     } catch (err: any) {
-      showToast('error', 'Reset Failed', err.message);
+      showToast('error', 'Reset Failed', errorText(err));
     } finally {
       setIsResetting(false);
     }
@@ -181,7 +183,7 @@ export const StaffManagementView: React.FC = () => {
                     )}
                   </td>
                   <td style={{ fontSize: 12, color: 'var(--text-secondary)' }} className="mono">
-                    {staff.created_at?.slice(0, 10)}
+                    {formatISTDate(staff.created_at)}
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'inline-flex', gap: 8 }}>

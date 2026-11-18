@@ -21,6 +21,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
+import { isLowStock } from '../utils/lowStock';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -326,7 +327,7 @@ dino.post('/search', authMiddleware, async (c) => {
         quantity: item.quantity,
         unit: item.unit,
         low_stock_threshold: item.low_stock_threshold,
-        is_low_stock: item.quantity < item.low_stock_threshold,
+        is_low_stock: isLowStock(item.quantity, item.low_stock_threshold),
         image_key: item.image_key,
         thumb_key: item.thumb_key,
         score: m.score,

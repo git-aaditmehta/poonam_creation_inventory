@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { isLowStock } from './lowStock';
 
 export interface ExportStockItem {
   item_id: string;
@@ -38,12 +39,15 @@ export function generateStockPdf({
   });
 
   const now = new Date();
+  // Indian time, whatever the phone's own time-zone setting
   const dateFormatted = now.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
     day: '2-digit',
     month: 'short',
     year: 'numeric',
   });
   const timeFormatted = now.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
@@ -96,7 +100,7 @@ export function generateStockPdf({
 
   // Table Data
   const tableRows = items.map((item, index) => {
-    const isLowStock = item.quantity <= item.low_stock_threshold;
+    const isLow = isLowStock(item);
     const formattedQty = item.unit === 'KGS' 
       ? Number(item.quantity).toFixed(3)
       : Number(item.quantity).toLocaleString('en-IN');
@@ -106,7 +110,7 @@ export function generateStockPdf({
       item.item_id,
       formattedQty,
       item.unit,
-      isLowStock ? 'Low Stock' : 'In Stock',
+      isLow ? 'Low Stock' : 'In Stock',
     ];
   });
 

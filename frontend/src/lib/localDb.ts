@@ -10,6 +10,8 @@
  *   const rows = await localDb.query('SELECT * FROM stones WHERE item_id LIKE ?', ['%KD%']);
  */
 import { jewelryCategoryCaseSql } from '../utils/jewelryCategory';
+import { isLowStock, LOW_STOCK_SQL } from '../utils/lowStock';
+import { itemIdSearchSql } from '../utils/itemId';
 
 type PendingTask = {
   resolve: (value: any) => void;
@@ -133,7 +135,8 @@ class LocalSqlite {
     if (!item || typeof item !== 'object') return item;
     return {
       ...item,
-      is_low_stock: Boolean(item.is_low_stock || (item.low_stock_threshold !== undefined && item.quantity <= item.low_stock_threshold)),
+      // Always from the current quantity (a stored flag can be stale after an offline sale)
+      is_low_stock: item.low_stock_threshold !== undefined && item.quantity !== undefined ? isLowStock(item) : Boolean(item.is_low_stock),
       is_deleted: Boolean(item.is_deleted),
     } as T;
   }
@@ -145,9 +148,10 @@ class LocalSqlite {
 
     let rows: any[];
     if (search && search.trim()) {
+      const q = itemIdSearchSql(search); // ignores capitals, spaces and dashes
       rows = await this.query<T>(
-        `SELECT * FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ? ORDER BY item_id ASC`,
-        [`%${search.trim()}%`]
+        `SELECT * FROM ${table} WHERE is_deleted = 0 AND ${q.sql} ORDER BY item_id ASC`,
+        q.params
       );
     } else {
       rows = await this.query<T>(
@@ -175,8 +179,9 @@ class LocalSqlite {
     let where = 'WHERE is_deleted = 0';
     const params: unknown[] = [];
     if (search && search.trim()) {
-      where += ' AND item_id LIKE ?';
-      params.push(`%${search.trim()}%`);
+      const q = itemIdSearchSql(search); // ignores capitals, spaces and dashes: "ps365" finds "PS-365"
+      where += ` AND ${q.sql}`;
+      params.push(...q.params);
     }
     if (filter) {
       where += ` AND ${filter.sql}`;
@@ -334,7 +339,7 @@ class LocalSqlite {
     if (typeof item.is_low_stock === 'boolean') {
       item.is_low_stock = item.is_low_stock ? 1 : 0;
     } else if (item.is_low_stock === undefined && item.quantity !== undefined && item.low_stock_threshold !== undefined) {
-      item.is_low_stock = Number(item.quantity) < Number(item.low_stock_threshold) ? 1 : 0;
+      item.is_low_stock = isLowStock({ quantity: item.quantity, low_stock_threshold: item.low_stock_threshold }) ? 1 : 0;
     }
 
     if (typeof item.is_deleted === 'boolean') {
@@ -412,7 +417,7 @@ class LocalSqlite {
     const allLowStock: any[] = [];
     for (const cat of categories) {
       const items = await this.query(
-        `SELECT * FROM ${cat.table} WHERE is_deleted = 0 AND quantity < low_stock_threshold ORDER BY (low_stock_threshold - quantity) DESC`
+        `SELECT * FROM ${cat.table} WHERE is_deleted = 0 AND ${LOW_STOCK_SQL} ORDER BY (low_stock_threshold - quantity) DESC`
       );
       for (const item of items) {
         allLowStock.push({
@@ -437,9 +442,14 @@ class LocalSqlite {
     await this.exec('INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)', [key, value]);
   }
 
-  /** Clear all local data (for logout or force re-sync). */
-  async clearAll(): Promise<void> {
-    for (const table of ['plated_jewelry', 'raw_jewelry', 'stones', 'foil', 'transactions', 'pending_ops', 'sync_state']) {
+  /**
+   * Clear the synced inventory copy (for logout or force re-sync). Costing tables are never touched.
+   * `keepPendingOps`: keep unsent offline changes (expired login: they are sent after the same user logs in again).
+   */
+  async clearAll(options: { keepPendingOps?: boolean } = {}): Promise<void> {
+    const tables = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil', 'transactions', 'sync_state'];
+    if (!options.keepPendingOps) tables.push('pending_ops');
+    for (const table of tables) {
       await this.exec(`DELETE FROM ${table}`);
     }
   }

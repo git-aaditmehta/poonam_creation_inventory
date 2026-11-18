@@ -58,6 +58,16 @@ async function apiRequest(endpoint: string, method: string, body?: any): Promise
     body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
   });
   if (!res.ok) {
+    // The server says this login is no longer valid: let the app sign out (unsent changes are kept)
+    if (res.status === 401) {
+      try {
+        sessionStorage.removeItem('session_token');
+        localStorage.removeItem('session_token');
+      } catch {
+        /* ignore */
+      }
+      window.dispatchEvent(new CustomEvent('auth-unauthorized'));
+    }
     const text = await res.text();
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { parsed = { error: text }; }
@@ -67,6 +77,65 @@ async function apiRequest(endpoint: string, method: string, body?: any): Promise
     throw err;
   }
   return res.json();
+}
+
+// ── Stock operation reconciliation ─────────────────────────────
+// Stock in/out is applied on the phone instantly and sent in the background (online and offline alike).
+// The server's answer is then made authoritative on the phone.
+
+const STOCK_ENDPOINT = '/api/stock/operate';
+const CATEGORY_PATH: Record<string, string> = {
+  plated_jewelry: 'plated-jewelry',
+  raw_jewelry: 'raw-jewelry',
+  stones: 'stones',
+  foil: 'foil',
+};
+
+/** Accepted: adopt the server's balance and history id (no duplicate history entry on this phone). */
+async function reconcileAcceptedStockOp(payload: any, result: any): Promise<void> {
+  try {
+    if (!payload?.category || !CATEGORY_PATH[payload.category]) return;
+    if (typeof result?.new_balance === 'number' && !result.duplicate) {
+      await localDb.exec(`UPDATE ${payload.category} SET quantity = ? WHERE id = ?`, [result.new_balance, payload.item_id]);
+    }
+    if (result?.transaction_id && payload.idempotency_key) {
+      // The server's history row (arriving via pull) has the server id; give the temporary row that id so
+      // the pull replaces it instead of adding a second copy
+      await localDb.exec(
+        'DELETE FROM transactions WHERE id = ? AND idempotency_key != ?',
+        [result.transaction_id, payload.idempotency_key]
+      );
+      await localDb.exec('UPDATE transactions SET id = ? WHERE idempotency_key = ?', [result.transaction_id, payload.idempotency_key]);
+    }
+  } catch (e) {
+    console.warn('[Sync] Could not reconcile accepted stock op:', e);
+  }
+}
+
+/** Refused (e.g. someone else sold it first): undo it on this phone and tell the user. */
+async function revertRejectedStockOp(payload: any, message: string): Promise<void> {
+  try {
+    if (!payload?.category || !CATEGORY_PATH[payload.category]) return;
+    if (payload.idempotency_key) {
+      await localDb.exec('DELETE FROM transactions WHERE idempotency_key = ?', [payload.idempotency_key]);
+    }
+    try {
+      const fresh = await apiRequest(`/api/inventory/${CATEGORY_PATH[payload.category]}/${encodeURIComponent(payload.item_id)}`, 'GET');
+      if (fresh?.item && typeof fresh.item.quantity === 'number') {
+        await localDb.exec(`UPDATE ${payload.category} SET quantity = ? WHERE id = ?`, [fresh.item.quantity, payload.item_id]);
+      }
+    } catch (e: any) {
+      if (e?.status === 404) await localDb.exec(`DELETE FROM ${payload.category} WHERE id = ?`, [payload.item_id]);
+    }
+  } catch (e) {
+    console.warn('[Sync] Could not revert rejected stock op:', e);
+  }
+  window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: payload?.category || 'all' } }));
+  window.dispatchEvent(
+    new CustomEvent('stock-op-rejected', {
+      detail: { itemId: payload?.display_item_id || payload?.item_id, operation: payload?.operation, quantity: payload?.quantity, message },
+    })
+  );
 }
 
 // ── Sync Engine Class ──────────────────────────────────────────
@@ -87,6 +156,7 @@ class SyncEngine {
   private _syncTimer: ReturnType<typeof setInterval> | null = null;
   private _debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private _started = false;
+  private _rerunRequested = false;
 
   /** Subscribe to status changes. Returns unsubscribe function. */
   subscribe(listener: SyncStatusListener): () => void {
@@ -128,23 +198,11 @@ class SyncEngine {
 
     // Check if bootstrap is needed
     const checkpoint = await localDb.getSyncState('checkpoint');
-    let totalLocalItems = 0;
-    let sCount = 0;
-    try {
-      const [s, p, r, f] = await Promise.all([
-        localDb.count('stones'),
-        localDb.count('plated_jewelry'),
-        localDb.count('raw_jewelry'),
-        localDb.count('foil'),
-      ]);
-      sCount = s;
-      totalLocalItems = s + p + r + f;
-    } catch {
-      totalLocalItems = 0;
-    }
-
-    // Bootstrap is complete only if checkpoint exists AND local inventory tables contain data (including stones)
-    const bootstrapDone = checkpoint !== null && totalLocalItems > 0 && sCount > 0;
+    // The first full download is done once it saved its checkpoint (written only at the END of a successful
+    // download; cleared by logout / force re-sync). It used to also require at least one Kundan (stones) item,
+    // so a shop with no stones re-downloaded everything on every open, and a phone opened offline never
+    // synced again in that session.
+    const bootstrapDone = checkpoint !== null;
     this._updateStatus({ bootstrapComplete: bootstrapDone });
 
     // Self-healing: If local DB already bootstrapped, replay changes from seq 0
@@ -196,6 +254,11 @@ class SyncEngine {
 
   private _onOnline = (): void => {
     this._updateStatus({ isOnline: true });
+    // Opened offline before the first download ever finished: do it now
+    if (!this._status.bootstrapComplete) {
+      this.bootstrap();
+      return;
+    }
     this.triggerSync();
   };
 
@@ -283,14 +346,22 @@ class SyncEngine {
       this._syncLock = false;
       this._updateStatus({ isSyncing: false });
     }
+    // Unsent offline stock changes (e.g. kept across an expired login) go out right away, not in 30 s
+    if (this._status.bootstrapComplete && navigator.onLine) this.triggerSync();
   }
 
   // ── Trigger Sync ─────────────────────────────────────────────
 
   /** Trigger a full sync cycle (push then pull). */
   async triggerSync(): Promise<void> {
-    if (this._syncLock || !navigator.onLine) return;
+    if (!navigator.onLine) return;
+    if (this._syncLock) {
+      // A sync is running: run once more right after it, so a just-made stock change never waits 30 s
+      this._rerunRequested = true;
+      return;
+    }
     if (!this._status.bootstrapComplete) return;
+    this._rerunRequested = false;
 
     this._syncLock = true;
     this._updateStatus({ isSyncing: true, error: null });
@@ -314,6 +385,10 @@ class SyncEngine {
       this._updateStatus({ isSyncing: false });
       await this._refreshPendingCounts();
     }
+    if (this._rerunRequested && navigator.onLine) {
+      this._rerunRequested = false;
+      this.triggerSync();
+    }
   }
 
   // ── Push (Local → Cloud) ─────────────────────────────────────
@@ -325,12 +400,11 @@ class SyncEngine {
     console.log(`[Sync] Pushing ${ops.length} pending operations...`);
 
     for (const op of ops) {
+      // For FormData operations (image upload), we handle differently
+      let payload: any;
+      try { payload = JSON.parse(op.payload); } catch { payload = op.payload; }
       try {
         await updatePendingOpStatus(op.id, 'SYNCING');
-
-        // For FormData operations (image upload), we handle differently
-        let payload: any;
-        try { payload = JSON.parse(op.payload); } catch { payload = op.payload; }
 
         const result = await apiRequest(op.endpoint, op.method, payload);
 
@@ -338,6 +412,7 @@ class SyncEngine {
         if (result.duplicate) {
           console.log(`[Sync] Op ${op.id} was already processed (duplicate)`);
         }
+        if (op.endpoint === STOCK_ENDPOINT) await reconcileAcceptedStockOp(payload, result);
 
         // Mark as done and remove
         await updatePendingOpStatus(op.id, 'DONE');
@@ -369,6 +444,7 @@ class SyncEngine {
             // Concurrency rejection or business rule failure — mark FAILED and pull fresh state
             console.warn(`[Sync] Op ${op.id} conflict:`, err.message);
             await updatePendingOpStatus(op.id, 'FAILED', err.message || 'Conflict: operation rejected by server');
+            if (op.endpoint === STOCK_ENDPOINT) await revertRejectedStockOp(payload, err.message || 'Rejected by the server');
             try {
               await this._pull();
             } catch (pullErr) {
@@ -382,6 +458,9 @@ class SyncEngine {
         } else {
           // Other error — mark as failed
           await updatePendingOpStatus(op.id, 'FAILED', err.message);
+          if (op.endpoint === STOCK_ENDPOINT && err.status >= 400 && err.status < 500) {
+            await revertRejectedStockOp(payload, err.message || 'Rejected by the server');
+          }
           console.error(`[Sync] Op ${op.id} failed:`, err.message);
         }
       }
@@ -426,6 +505,10 @@ class SyncEngine {
               const payload = typeof change.payload === 'string'
                 ? JSON.parse(change.payload)
                 : change.payload;
+              if (change.entity_type === 'transactions' && payload?.idempotency_key) {
+                // Replace this phone's temporary copy of the same stock operation (no double entry in History)
+                await localDb.exec('DELETE FROM transactions WHERE idempotency_key = ? AND id != ?', [payload.idempotency_key, change.entity_id]);
+              }
               await localDb.upsertItem(change.entity_type, payload);
             }
           } catch (innerErr: any) {
@@ -462,9 +545,12 @@ class SyncEngine {
     window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: 'all' } }));
   }
 
-  /** Force re-sync — clears local data and re-bootstraps. */
+  /**
+   * Force re-sync — re-downloads all data. Unsent changes are KEPT and sent right after the download
+   * (bootstrap pushes the queue when it finishes). Nothing waiting on this phone is ever lost.
+   */
   async forceResync(): Promise<void> {
-    await localDb.clearAll();
+    await localDb.clearAll({ keepPendingOps: true });
     this._updateStatus({ bootstrapComplete: false });
     if (navigator.onLine) {
       await this.bootstrap();

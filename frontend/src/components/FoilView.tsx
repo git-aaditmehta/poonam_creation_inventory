@@ -13,11 +13,14 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
+import { isLowStock } from '../utils/lowStock';
+import { ITEM_KEY_SQL, itemKey } from '../utils/itemId';
 import type { FoilItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { blockIfOffline, OFFLINE_TITLE } from '../utils/offlineGuard';
 import { GeneratePdfButton } from './GeneratePdfButton';
 import { emitSyncStatus } from './SyncStatusBar';
-import { parseFriendlyError } from '../utils/friendlyErrors';
+import { parseFriendlyError, errorText } from '../utils/friendlyErrors';
 
 interface FoilViewProps {
   user: User;
@@ -77,7 +80,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
       } catch {
-        showToast('error', 'Failed to load foil items', err.message);
+        showToast('error', 'Failed to load foil items', errorText(err));
       }
     } finally {
       setIsLoading(false);
@@ -120,19 +123,27 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (blockIfOffline(showToast, 'Adding an item')) return;
     const trimmedId = formItemId.trim();
     if (!trimmedId || formQty === '' || formThreshold === '' || formCost === '') {
       const friendly = parseFriendlyError('Validation: Please fill all required fields', { categoryName: 'Foil' });
-      showToast('error', friendly.title, friendly.solution);
+      showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
       return;
     }
 
     // Fast local duplicate check (<1ms)
     try {
-      const existing = await localDb.get('SELECT id FROM foil WHERE item_id = ? AND is_deleted = 0', [trimmedId]);
+      // Same item if the ID differs only in capitals, spaces or dashes ("PS 365" = "ps-365")
+      const existing = await localDb.get<{ item_id: string }>(
+        `SELECT item_id FROM foil WHERE ${ITEM_KEY_SQL} = ? AND is_deleted = 0`,
+        [itemKey(trimmedId)]
+      );
       if (existing) {
-        const friendly = parseFriendlyError('Item already exists', { categoryName: 'Foil', itemId: trimmedId });
-        showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
+        showToast(
+          'error',
+          'Item ID already in use',
+          `"${trimmedId}" already exists${existing.item_id !== trimmedId ? ` as "${existing.item_id}"` : ''} in Foil. IDs that differ only in capitals, spaces or dashes are the same item. To change its quantity, use Stock Operations.`
+        );
         return;
       }
     } catch { /* proceed */ }
@@ -171,7 +182,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
     }
 
     // 2. Instant UI feedback (<5ms modal close)
-    showToast('success', 'Foil Stock Added', `${trimmedId} saved to inventory`);
+    showToast('success', 'Foil Stock Added', `${trimmedId} added. Saving to the cloud…`);
     setIsCreateOpen(false);
     resetForm();
 
@@ -214,14 +225,20 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
         const friendly = parseFriendlyError(err, { categoryName: 'Foil', itemId: trimmedId });
 
         if (friendly.isOffline) {
+          // Internet dropped while saving: nothing reached the cloud, so take the item back off this screen
+          // (items are only ever created online — no false "saved locally" promise)
+          await localDb.deleteItem('foil', clientId);
+          setItems((prev) => prev.filter((i) => i.id !== clientId));
+          setTotal((t) => Math.max(0, t - 1));
           emitSyncStatus({
-            state: 'offline',
-            title: 'Working Offline',
-            message: `${trimmedId} safely saved locally. Will sync when reconnected.`,
-            solution: friendly.solution,
+            state: 'error',
+            title: OFFLINE_TITLE,
+            message: `${trimmedId} was NOT saved: the internet connection dropped.`,
+            solution: 'Connect to the internet and add it again. Stock in/out still works offline.',
             itemId: trimmedId,
             category: 'Foil',
           });
+          showToast('warning', OFFLINE_TITLE, `${trimmedId} was not saved. Connect to the internet and add it again.`);
         } else {
           // Rollback on duplicate or invalid error
           await localDb.deleteItem('foil', clientId);
@@ -242,7 +259,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
             category: 'Foil',
             error: friendly,
           });
-          showToast('error', friendly.title, friendly.solution);
+          showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
         }
       }
     })();
@@ -250,6 +267,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (blockIfOffline(showToast, 'Editing an item')) return;
     if (!activeItem) return;
 
     setIsSubmitting(true);
@@ -265,13 +283,14 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
       fetchValuation();
     } catch (err: any) {
       const friendly = parseFriendlyError(err, { categoryName: 'Foil', itemId: formItemId.trim() });
-      showToast('error', friendly.title, friendly.solution);
+      showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDelete = async (item: FoilItem) => {
+    if (blockIfOffline(showToast, 'Deleting an item')) return;
     if (!confirm(`Delete foil record ${item.item_id}?`)) return;
 
     try {
@@ -286,7 +305,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
       showToast('success', 'Item Deleted', `${item.item_id} removed`);
     } catch (err: any) {
       const friendly = parseFriendlyError(err, { categoryName: 'Foil', itemId: item.item_id });
-      showToast('error', friendly.title, friendly.solution);
+      showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
     }
   };
 
@@ -432,7 +451,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
               {items.map((item) => (
                 <tr
                   key={item.id}
-                  className={item.is_low_stock || item.quantity <= item.low_stock_threshold ? 'row-low-stock' : ''}
+                  className={isLowStock(item) ? 'row-low-stock' : ''}
                 >
                   <td>
                     <div style={{ fontWeight: 700, fontSize: 14 }} className="mono">

@@ -30,6 +30,15 @@ export interface LearnJob {
 
 export type LearnResult = 'learned' | 'skipped' | 'failed';
 
+/** What the person should be told after a photo upload (null = nothing worth saying). */
+export function learnResultMessage(result: LearnResult, itemId: string): { type: 'success' | 'info' | 'warning'; title: string; message: string } | null {
+  if (result === 'learned') return { type: 'success', title: 'Ready to scan', message: `${itemId} can now be found with Scan DINO.` };
+  if (result === 'failed') {
+    return { type: 'warning', title: 'Not ready to scan yet', message: `${itemId} is saved, but Scan could not learn it now. It will be learned the next time Scan DINO is opened.` };
+  }
+  return { type: 'info', title: 'Scan will learn it later', message: `${itemId} is saved. It will be learned for scanning the next time Scan DINO is opened.` };
+}
+
 const DECLINED_KEY = 'dino_model_download_declined';
 let queue: Promise<unknown> = Promise.resolve();
 

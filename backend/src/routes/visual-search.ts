@@ -17,6 +17,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
 import { isLlamaScanEnabled } from '../utils/features';
+import { isLowStock } from '../utils/lowStock';
 import { CLOSE_CALL_MARGIN, RANK_VERSION, finalScore, scoreAttributes } from '../utils/jewelryRank';
 import {
   analyzeJewelryImage,
@@ -254,7 +255,7 @@ visualSearch.post('/search', authMiddleware, async (c) => {
         quantity: item.quantity,
         unit: item.unit,
         low_stock_threshold: item.low_stock_threshold,
-        is_low_stock: item.quantity < item.low_stock_threshold,
+        is_low_stock: isLowStock(item.quantity, item.low_stock_threshold),
         image_key: item.image_key,
         thumb_key: item.thumb_key,
         score: m.final, // final (re-ranked) score; cosine and attribute parts below

@@ -4,6 +4,7 @@ import { api } from '../api';
 import { localDb } from '../lib/localDb';
 import type { LowStockItem, InventoryCategory } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 
 interface LowStockViewProps {
   onQuickRestock: (category: InventoryCategory, item: any) => void;
@@ -23,7 +24,7 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
         const res = await api.inventory.getLowStock();
         setItems(res.items);
       } catch (err: any) {
-        showToast('error', 'Failed to fetch low stock alerts', err.message);
+        showToast('error', 'Failed to fetch low stock alerts', errorText(err));
       }
     } finally {
       setIsLoading(false);

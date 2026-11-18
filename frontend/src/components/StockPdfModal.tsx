@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Download, Share2, ExternalLink, FileText } from 'lucide-react';
 import type { GeneratedPdfResult } from '../utils/pdfGenerator';
+import { formatIST } from '../utils/time';
 
 interface StockPdfModalProps {
   pdfResult: GeneratedPdfResult | null;
@@ -61,7 +62,7 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
       // 3. Fallback: Download file and open WhatsApp Web/App
       handleDownload();
       const whatsappText = encodeURIComponent(
-        `*Poonam Creation Stock Statement*\nCategory: ${categoryTitle}\nTotal Items: ${pdfResult.totalItems}\nGenerated on: ${new Date().toLocaleDateString('en-IN')}`
+        `*Poonam Creation Stock Statement*\nCategory: ${categoryTitle}\nTotal Items: ${pdfResult.totalItems}\nGenerated on: ${formatIST(new Date())} (IST)`
       );
       window.open(`https://api.whatsapp.com/send?text=${whatsappText}`, '_blank');
       showToast?.(

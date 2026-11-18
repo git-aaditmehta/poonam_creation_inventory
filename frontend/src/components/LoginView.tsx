@@ -3,6 +3,7 @@ import { Shield, Sparkles, KeyRound, User as UserIcon, Loader2, ArrowRight } fro
 import { api } from '../api';
 import type { User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
@@ -30,8 +31,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       showToast('success', 'Welcome back', `Signed in as ${res.user.role === 'owner' ? 'Owner' : 'Staff'}`);
       onLoginSuccess(res.user);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Login failed. Please verify credentials.');
-      showToast('error', 'Login Failed', err.message);
+      // On the login screen a 401 means "wrong username or password", not "login expired"
+      const msg = err?.status === 401
+        ? 'Wrong username or password. Please check and try again.'
+        : err?.status === 429
+          ? err.message || 'Too many attempts. Please wait a few minutes and try again.'
+          : errorText(err);
+      setErrorMessage(msg);
+      showToast('error', 'Sign-in failed', msg);
     } finally {
       setIsLoading(false);
     }

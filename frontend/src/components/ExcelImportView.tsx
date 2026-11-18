@@ -21,9 +21,48 @@ import * as XLSX from 'xlsx';
 import { api } from '../api';
 import type { InventoryCategory, StagingRow, InventoryUnit } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 import { localDb } from '../lib/localDb';
 import { syncEngine } from '../lib/syncEngine';
 import { normalizeUnit } from '../utils/units';
+import { blockIfOffline } from '../utils/offlineGuard';
+import { itemKey } from '../utils/itemId';
+
+/** Runs `fn` over `items` with at most `limit` at a time (a 2,000-row sheet must not fire 2,000 requests at once). */
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/** Rows that are the same item as an earlier row in this sheet (capitals, spaces and dashes ignored). */
+function markSheetDuplicates<R extends { item_id: string; rowNumber: number; status: string; validationErrors: string[] }>(rows: R[]): R[] {
+  const firstRow = new Map<string, R>();
+  return rows.map((row) => {
+    const key = itemKey(row.item_id || '');
+    if (!key) return row;
+    const first = firstRow.get(key);
+    if (!first) {
+      firstRow.set(key, row);
+      return row;
+    }
+    return {
+      ...row,
+      status: 'invalid',
+      validationErrors: [
+        ...row.validationErrors,
+        `Same item as row ${first.rowNumber} ("${first.item_id}") in this sheet. IDs that differ only in capitals, spaces or dashes are the same item.`,
+      ],
+    };
+  });
+}
 import {
   parseExcelWorksheet,
   CATEGORY_FIELDS,
@@ -112,6 +151,7 @@ export const ExcelImportView: React.FC = () => {
             }
           } catch (err: any) {
             console.warn(`Could not parse sheet "${name}":`, err.message);
+            showToast('warning', `Sheet "${name}" skipped`, `It could not be read (${err.message}). The other sheets are loaded.`);
           }
         }
       }
@@ -148,7 +188,7 @@ export const ExcelImportView: React.FC = () => {
         `Found ${names.length} sheet(s). Active sheet: "${initialSheet}" with ${parsedMap[initialSheet].detectedColumns.length} columns.`
       );
     } catch (err: any) {
-      showToast('error', 'Parsing Failed', err.message);
+      showToast('error', 'Parsing Failed', errorText(err));
     }
   };
 
@@ -225,6 +265,7 @@ export const ExcelImportView: React.FC = () => {
 
   // Convert raw rows to staging queue and validate with Worker (supporting cross-sheet joins)
   const handleConfirmMapping = async () => {
+    if (blockIfOffline(showToast, 'Excel import')) return;
     setIsMappingConfirmed(true);
     setIsValidating(true);
 
@@ -421,9 +462,9 @@ export const ExcelImportView: React.FC = () => {
       return;
     }
 
-    // 5. Validate rows concurrently with the Worker
-    const validatedRows = await Promise.all(
-      rowsToStage.map(async (row) => {
+    // 5. Validate rows with the server, 6 at a time
+    const validatedRows = await mapLimited(rowsToStage, 6, async (row) => {
+      {
         try {
           const res = await api.excel.validateRow({
             category,
@@ -446,10 +487,10 @@ export const ExcelImportView: React.FC = () => {
             validationErrors: errors,
           };
         }
-      })
-    );
+      }
+    });
 
-    setStagingQueue(validatedRows);
+    setStagingQueue(markSheetDuplicates(validatedRows));
     setIsValidating(false);
   };
 
@@ -487,6 +528,7 @@ export const ExcelImportView: React.FC = () => {
 
   // Commit individual row to D1 and local SQLite
   const commitRow = async (index: number) => {
+    if (blockIfOffline(showToast, 'Excel import')) return;
     const row = stagingQueue[index];
     if (row.status !== 'valid') return;
 
@@ -542,12 +584,13 @@ export const ExcelImportView: React.FC = () => {
         validationErrors: [err.message],
       };
       setStagingQueue(updated);
-      showToast('error', 'Commit Failed', err.message);
+      showToast('error', 'Commit Failed', errorText(err));
     }
   };
 
   // Bulk commit all valid rows
   const commitAllValidRows = async () => {
+    if (blockIfOffline(showToast, 'Excel import')) return;
     const validIndices = stagingQueue
       .map((row, idx) => (row.status === 'valid' ? idx : -1))
       .filter((idx) => idx !== -1);

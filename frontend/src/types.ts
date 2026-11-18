@@ -81,10 +81,18 @@ export interface HistoryResponse {
     total_added: number;
     total_subtracted: number;
   };
+  /** Totals per unit (pieces, grams and kg are never added together). Absent on an older backend. */
+  totals_by_unit?: UnitTotal[];
   total: number;
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface UnitTotal {
+  unit: string;
+  added: number;
+  removed: number;
 }
 
 export interface StockOperationPayload {
@@ -146,6 +154,12 @@ export interface StorageUsageResponse {
     total_size_mb?: number;
   };
   r2: {
+    /** Jewelry photo files (2 per item: full + grid). Absent on an older backend. */
+    photo_file_count?: number;
+    photo_size_mb?: number;
+    /** The scanner model stored in R2 (not a photo) */
+    scanner_model_size_mb?: number;
+    other_file_count?: number;
     object_count: number;
     total_size_bytes: number;
     total_size_mb: number;

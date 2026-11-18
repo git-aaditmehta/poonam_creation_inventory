@@ -101,18 +101,15 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     return c.json({ error: 'Plated jewelry item not found' }, 404);
   }
 
-  // Generate stable R2 keys based on item UUID (not mutable item_id)
-  const imageKey = `plated/${itemId}/full`;
-  const thumbKey = `plated/${itemId}/thumb`;
+  // A NEW key per photo (item UUID + upload version). The photo link then changes only when the photo
+  // itself changes, so phones and the browser keep it cached across stock movements and offline.
+  // (The old stable key + "?t=updated_at" re-downloaded every photo after every sale.)
+  const version = Date.now().toString(36);
+  const imageKey = `plated/${itemId}/${version}-full`;
+  const thumbKey = `plated/${itemId}/${version}-thumb`;
 
-  // Delete old images if replacing
-  if (item.image_key) {
-    try { await c.env.IMAGES.delete(item.image_key); } catch { /* ignore */ }
-  }
-  if (item.thumb_key) {
-    try { await c.env.IMAGES.delete(item.thumb_key); } catch { /* ignore */ }
-  }
-
+  // Store the new photo FIRST, point the item at it, and only then delete the old files:
+  // a failure half-way can never leave the item without a photo.
   const storedFull = await c.env.IMAGES.put(imageKey, fullArrayBuffer, {
     httpMetadata: { contentType: fullImage.type || 'image/webp' },
   });
@@ -125,6 +122,13 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
   await c.env.DB.prepare(
     `UPDATE plated_jewelry SET image_key = ?, thumb_key = ?, updated_at = ? WHERE id = ?`
   ).bind(imageKey, thumbKey, nowIso, itemId).run();
+
+  // Old files of a replaced photo (never the ones just written)
+  for (const oldKey of [item.image_key, item.thumb_key]) {
+    if (oldKey && oldKey !== imageKey && oldKey !== thumbKey) {
+      try { await c.env.IMAGES.delete(oldKey); } catch { /* orphan file: harmless */ }
+    }
+  }
 
   // Log CDC change so syncing clients receive the new image keys
   await logSyncChange(c.env.DB, 'plated_jewelry', itemId, 'UPDATE', {
@@ -181,7 +185,14 @@ images.get('/:key{.+}', async (c) => {
   const headers = new Headers();
   headers.set('Content-Type', object.httpMetadata?.contentType || 'image/webp');
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Cache-Control', 'public, max-age=604800, stale-while-revalidate=86400');
+  // Versioned photo files (plated/<id>/<version>-full|thumb) never change: cache them for a year.
+  // Older un-versioned keys keep the previous 7-day policy.
+  headers.set(
+    'Cache-Control',
+    /\/[0-9a-z]+-(full|thumb)$/.test(key)
+      ? 'public, max-age=31536000, immutable'
+      : 'public, max-age=604800, stale-while-revalidate=86400'
+  );
 
   return new Response(object.body, { headers });
 });

@@ -37,6 +37,7 @@ import { api } from '../api';
 import { localDb } from '../lib/localDb';
 import type { User, PlatedJewelryItem, ScanCategory, DinoMatch, DinoSearchResponse, DinoStatusResponse } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 import {
   DINO_STORAGE_KEY,
   loadScanLog,
@@ -666,7 +667,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       await fetchStatus();
       learnPending();
     } catch (err: any) {
-      showToast('error', 'Reset failed', err.message);
+      showToast('error', 'Reset failed', errorText(err));
     }
   };
 

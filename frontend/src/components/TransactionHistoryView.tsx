@@ -8,11 +8,13 @@ import {
   MinusCircle,
   Loader2,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
-import type { Transaction } from '../types';
+import type { Transaction, UnitTotal } from '../types';
+import { formatIST, istDayStartUtc, istDayEndUtc, todayIST } from '../utils/time';
+import { itemIdSearchSql } from '../utils/itemId';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 
 export const TransactionHistoryView: React.FC = () => {
   const { showToast } = useToast();
@@ -29,118 +31,169 @@ export const TransactionHistoryView: React.FC = () => {
   const [dateTo, setDateTo] = useState<string>('');
   const [itemSearch, setItemSearch] = useState<string>('');
 
-  // Aggregates
-  const [totals, setTotals] = useState<{ total_added: number; total_subtracted: number }>({
-    total_added: 0,
-    total_subtracted: 0,
-  });
+  // Totals per unit (pieces, grams and kg are never added together)
+  const [unitTotals, setUnitTotals] = useState<UnitTotal[]>([]);
+  // Where the list came from: the cloud (complete) or this phone (offline: recent entries only)
+  const [source, setSource] = useState<'cloud' | 'phone'>('cloud');
 
+  /** The same filters as SQL for this phone's own copy (dates are Indian calendar days). */
+  const localWhere = useCallback(() => {
+    let where = 'WHERE 1=1';
+    const params: any[] = [];
+    if (category) {
+      where += ' AND category = ?';
+      params.push(category);
+    }
+    // Stored times are UTC in two formats; datetime() reads both
+    if (dateFrom) {
+      where += ' AND datetime(created_at) >= ?';
+      params.push(istDayStartUtc(dateFrom));
+    }
+    if (dateTo) {
+      where += ' AND datetime(created_at) < ?';
+      params.push(istDayEndUtc(dateTo));
+    }
+    if (itemSearch.trim()) {
+      const q = itemIdSearchSql(itemSearch, 'item_display_id'); // ignores capitals, spaces and dashes
+      where += ` AND ${q.sql}`;
+      params.push(...q.params);
+    }
+    return { where, params };
+  }, [category, dateFrom, dateTo, itemSearch]);
+
+  const loadFromPhone = useCallback(async () => {
+    const { where, params } = localWhere();
+    const countRow = await localDb.get<{ total: number }>(`SELECT COUNT(*) as total FROM transactions ${where}`, params);
+    const totalCount = countRow?.total ?? 0;
+    const rows = await localDb.query<Transaction>(
+      `SELECT * FROM transactions ${where} ORDER BY datetime(created_at) DESC LIMIT 50 OFFSET ?`,
+      [...params, (page - 1) * 50]
+    );
+    const byUnit = await localDb.query<UnitTotal>(
+      `SELECT unit,
+         COALESCE(SUM(CASE WHEN operation = 'add' THEN quantity_change ELSE 0 END), 0) AS added,
+         COALESCE(SUM(CASE WHEN operation = 'subtract' THEN quantity_change ELSE 0 END), 0) AS removed
+       FROM transactions ${where} GROUP BY unit ORDER BY unit`,
+      params
+    );
+    setTransactions(rows);
+    setUnitTotals(byUnit);
+    setTotal(totalCount);
+    setTotalPages(Math.ceil(totalCount / 50) || 1);
+    setSource('phone');
+  }, [localWhere, page]);
+
+  // Online: the complete history from the cloud. Offline (or cloud unreachable): this phone's recent copy.
   const fetchHistory = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Try local DB first for instant results
-      let where = 'WHERE 1=1';
-      const params: any[] = [];
-
-      if (category) {
-        where += ' AND category = ?';
-        params.push(category);
+      if (navigator.onLine) {
+        try {
+          const res = await api.history.list({
+            page,
+            limit: 50,
+            category: category || undefined,
+            date_from: dateFrom || undefined,
+            date_to: dateTo || undefined,
+            item_search: itemSearch.trim() || undefined,
+          });
+          setTransactions(res.transactions);
+          setUnitTotals(res.totals_by_unit ?? []);
+          setTotal(res.total);
+          setTotalPages(res.totalPages || 1);
+          setSource('cloud');
+          return;
+        } catch (err: any) {
+          if (err?.status && err.status !== 0 && err.status < 500) {
+            showToast('error', 'Could not load history', errorText(err));
+            return;
+          }
+          // Network/server problem: fall back to this phone's copy below
+        }
       }
-      if (dateFrom) {
-        where += ' AND created_at >= ?';
-        params.push(dateFrom);
-      }
-      if (dateTo) {
-        where += ' AND created_at <= ?';
-        params.push(dateTo + 'T23:59:59');
-      }
-      if (itemSearch.trim()) {
-        where += ' AND (item_display_id LIKE ? OR item_id LIKE ?)';
-        params.push(`%${itemSearch.trim()}%`, `%${itemSearch.trim()}%`);
-      }
-
-      const countRow = await localDb.get<{ total: number }>(
-        `SELECT COUNT(*) as total FROM transactions ${where}`, params
-      );
-      const totalCount = countRow?.total ?? 0;
-      const offset = (page - 1) * 50;
-      const rows = await localDb.query<Transaction>(
-        `SELECT * FROM transactions ${where} ORDER BY created_at DESC LIMIT 50 OFFSET ?`,
-        [...params, offset]
-      );
-
-      // Compute aggregates
-      const aggRow = await localDb.get<{ total_added: number; total_subtracted: number }>(
-        `SELECT
-          COALESCE(SUM(CASE WHEN operation = 'add' THEN quantity_change ELSE 0 END), 0) as total_added,
-          COALESCE(SUM(CASE WHEN operation = 'subtract' THEN quantity_change ELSE 0 END), 0) as total_subtracted
-        FROM transactions ${where}`,
-        params
-      );
-
-      setTransactions(rows);
-      setTotals({ total_added: aggRow?.total_added ?? 0, total_subtracted: aggRow?.total_subtracted ?? 0 });
-      setTotal(totalCount);
-      setTotalPages(Math.ceil(totalCount / 50) || 1);
-    } catch {
-      // Fallback to API
-      try {
-        const res = await api.history.list({
-          page, limit: 50,
-          category: category || undefined,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-          item_search: itemSearch.trim() || undefined,
-        });
-        setTransactions(res.transactions);
-        setTotals(res.totals);
-        setTotal(res.total);
-        setTotalPages(res.totalPages || 1);
-      } catch (err: any) {
-        showToast('error', 'Failed to fetch history', err.message);
-      }
+      await loadFromPhone();
+    } catch (err: any) {
+      showToast('error', 'Could not load history', err?.message || 'Please try again.');
     } finally {
       setIsLoading(false);
     }
-  }, [page, category, dateFrom, dateTo, itemSearch, showToast]);
+  }, [page, category, dateFrom, dateTo, itemSearch, showToast, loadFromPhone]);
 
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
 
   useEffect(() => {
-    const handler = () => fetchHistory();
+    // Offline the list IS this phone's copy: refresh at once. Online it comes from the cloud: refresh shortly
+    // after sync activity settles (not on every background sync tick).
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handler = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => fetchHistory(), navigator.onLine ? 2000 : 0);
+    };
     window.addEventListener('localdb-change', handler);
-    return () => window.removeEventListener('localdb-change', handler);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('localdb-change', handler);
+    };
   }, [fetchHistory]);
 
-  const handleExportExcel = () => {
-    if (transactions.length === 0) {
-      showToast('warning', 'No Data', 'No transactions to export');
-      return;
-    }
-
+  // Exports ALL matching entries (not only the 50 on screen), with Indian time
+  const handleExportExcel = async () => {
     try {
-      const exportData = transactions.map((t) => ({
-        'Transaction ID': t.id,
-        'Timestamp': t.created_at,
+      let rows: Transaction[] = [];
+      let fromCloud = false;
+      if (navigator.onLine) {
+        try {
+          for (let p = 1; p <= 500; p++) {
+            const res = await api.history.list({
+              page: p,
+              limit: 200,
+              category: category || undefined,
+              date_from: dateFrom || undefined,
+              date_to: dateTo || undefined,
+              item_search: itemSearch.trim() || undefined,
+            });
+            rows.push(...res.transactions);
+            if (p >= (res.totalPages || 1)) break;
+          }
+          fromCloud = true;
+        } catch {
+          rows = [];
+        }
+      }
+      if (!fromCloud) {
+        const { where, params } = localWhere();
+        rows = await localDb.query<Transaction>(`SELECT * FROM transactions ${where} ORDER BY datetime(created_at) DESC`, params);
+      }
+      if (rows.length === 0) {
+        showToast('warning', 'Nothing to export', 'No stock movements match the selected filters.');
+        return;
+      }
+      const XLSX = await import('xlsx');
+      const exportData = rows.map((t) => ({
+        'Date & time (IST)': formatIST(t.created_at),
         'Category': t.category.replace('_', ' ').toUpperCase(),
         'Item Code': t.item_display_id,
-        'Operation': t.operation.toUpperCase(),
-        'Quantity Change': t.quantity_change,
+        'Operation': t.operation === 'add' ? 'STOCK IN' : 'STOCK OUT',
+        'Quantity': t.quantity_change,
         'Unit': t.unit,
         'Balance Before': t.quantity_before,
         'Balance After': t.quantity_after,
-        'Operator': t.performer_name || t.performed_by,
+        'Done by': t.performer_name || t.performed_by,
+        'Transaction ID': t.id,
       }));
-
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Audit_Trail');
-      XLSX.writeFile(wb, `Poonam_Transactions_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      showToast('success', 'Export Completed', 'Audit trail exported to Excel');
+      XLSX.utils.book_append_sheet(wb, ws, 'Stock_History');
+      XLSX.writeFile(wb, `Poonam_Stock_History_${todayIST()}.xlsx`);
+      showToast(
+        'success',
+        'Excel downloaded',
+        `${rows.length} stock movement${rows.length === 1 ? '' : 's'} exported${fromCloud ? '' : ' (offline: recent entries on this phone only)'}.`
+      );
     } catch (err: any) {
-      showToast('error', 'Export Failed', err.message);
+      showToast('error', 'Export failed', err?.message || 'Please try again.');
     }
   };
 
@@ -194,7 +247,9 @@ export const TransactionHistoryView: React.FC = () => {
               Total Stock Inflow
             </div>
             <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--emerald-text)' }} className="mono">
-              +{totals.total_added} units
+              {unitTotals.length === 0
+                ? '—'
+                : unitTotals.filter((u) => u.added > 0).map((u) => `+${u.added} ${u.unit}`).join(' · ') || '—'}
             </div>
           </div>
         </div>
@@ -219,7 +274,9 @@ export const TransactionHistoryView: React.FC = () => {
               Total Stock Outflow
             </div>
             <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--rose-text)' }} className="mono">
-              -{totals.total_subtracted} units
+              {unitTotals.length === 0
+                ? '—'
+                : unitTotals.filter((u) => u.removed > 0).map((u) => `−${u.removed} ${u.unit}`).join(' · ') || '—'}
             </div>
           </div>
         </div>
@@ -323,6 +380,24 @@ export const TransactionHistoryView: React.FC = () => {
         )}
       </div>
 
+      {source === 'phone' && (
+        <div
+          role="status"
+          style={{
+            padding: '10px 14px',
+            marginBottom: 12,
+            borderRadius: 'var(--radius-md)',
+            background: 'rgba(245,158,11,.10)',
+            border: '1px solid rgba(245,158,11,.3)',
+            color: '#92400E',
+            fontSize: 13,
+          }}
+        >
+          <strong>Offline — showing recent entries only.</strong> The complete history is in the cloud and appears when
+          you are back online.
+        </div>
+      )}
+
       {/* Transactions Table */}
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
@@ -350,7 +425,7 @@ export const TransactionHistoryView: React.FC = () => {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Timestamp</th>
+                <th>Date &amp; time (IST)</th>
                 <th>Category</th>
                 <th>Item Code</th>
                 <th>Operation</th>
@@ -363,7 +438,7 @@ export const TransactionHistoryView: React.FC = () => {
               {transactions.map((t) => (
                 <tr key={t.id}>
                   <td style={{ color: 'var(--text-secondary)', fontSize: 12 }} className="mono">
-                    {t.created_at}
+                    {formatIST(t.created_at)}
                   </td>
                   <td>
                     <span className="badge badge-gold">

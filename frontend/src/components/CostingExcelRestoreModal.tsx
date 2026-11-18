@@ -38,6 +38,7 @@ import {
 } from '../lib/costingEngine';
 import { localDb } from '../lib/localDb';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 
 export type CostingOnboardingSection = 'jewelry_costing' | 'raw_materials';
 
@@ -473,6 +474,7 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
             }
           } catch (err: any) {
             console.warn(`Could not parse sheet "${name}":`, err.message);
+            showToast('warning', `Sheet "${name}" skipped`, `It could not be read (${err.message}). The other sheets are loaded.`);
           }
         }
       }
@@ -540,7 +542,7 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
         `Workbook "${file.name}" loaded with ${parsedKeys.length} sheet(s). Active sheet: "${initialSheet}".`
       );
     } catch (err: any) {
-      showToast('error', 'Failed to read Excel', err.message);
+      showToast('error', 'Failed to read Excel', errorText(err));
     } finally {
       setIsReadingFile(false);
     }
@@ -855,7 +857,7 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
 
       setStep('staging');
     } catch (err: any) {
-      showToast('error', 'Staging Failed', err.message);
+      showToast('error', 'Staging Failed', errorText(err));
     } finally {
       setIsValidating(false);
     }
@@ -962,7 +964,7 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
       onRestoreSuccess();
       onClose();
     } catch (err: any) {
-      showToast('error', 'Commit Failed', err.message);
+      showToast('error', 'Commit Failed', errorText(err));
     } finally {
       setIsCommitting(false);
     }

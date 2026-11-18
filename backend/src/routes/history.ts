@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
+import { itemKey } from '../utils/itemId';
+import { IST_DAY_START_SQL, IST_DAY_END_SQL, isYmd } from '../utils/time';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -27,18 +29,25 @@ history.get('/', async (c) => {
     whereClause += ' AND category = ?';
     params.push(category);
   }
+  if ((dateFrom && !isYmd(dateFrom)) || (dateTo && !isYmd(dateTo))) {
+    return c.json({ error: 'Dates must be in the format YYYY-MM-DD' }, 400);
+  }
+  // Indian calendar days (00:00–24:00 IST); stored times are UTC
   if (dateFrom) {
-    whereClause += ' AND created_at >= ?';
+    whereClause += ` AND created_at >= ${IST_DAY_START_SQL}`;
     params.push(dateFrom);
   }
   if (dateTo) {
-    // Add 1 day to include the full end date
-    whereClause += ' AND created_at < datetime(?, "+1 day")';
+    whereClause += ` AND created_at < ${IST_DAY_END_SQL}`;
     params.push(dateTo);
   }
   if (itemSearch) {
-    whereClause += ' AND item_display_id LIKE ?';
-    params.push(`%${itemSearch}%`);
+    // Also ignores capitals, spaces and dashes: "ps365" finds "PS-365"
+    const key = itemKey(itemSearch);
+    whereClause += key
+      ? ` AND (item_display_id LIKE ? OR REPLACE(REPLACE(UPPER(TRIM(item_display_id)), ' ', ''), '-', '') LIKE ?)`
+      : ' AND item_display_id LIKE ?';
+    params.push(`%${itemSearch}%`, ...(key ? [`%${key}%`] : []));
   }
 
   // Get paginated results
@@ -50,20 +59,31 @@ history.get('/', async (c) => {
     `SELECT * FROM transactions ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
   ).bind(...params, limit, offset).all();
 
-  // Get aggregate totals for the filtered set
-  const totals = await c.env.DB.prepare(
-    `SELECT
-       COALESCE(SUM(CASE WHEN operation = 'add' THEN quantity_change ELSE 0 END), 0) as total_added,
-       COALESCE(SUM(CASE WHEN operation = 'subtract' THEN quantity_change ELSE 0 END), 0) as total_subtracted
-     FROM transactions ${whereClause}`
-  ).bind(...params).first<{ total_added: number; total_subtracted: number }>();
+  // Totals PER UNIT for the filtered set (pieces, grams and kg must never be added together)
+  const unitTotals = await c.env.DB.prepare(
+    `SELECT unit,
+       COALESCE(SUM(CASE WHEN operation = 'add' THEN quantity_change ELSE 0 END), 0) as added,
+       COALESCE(SUM(CASE WHEN operation = 'subtract' THEN quantity_change ELSE 0 END), 0) as removed
+     FROM transactions ${whereClause} GROUP BY unit ORDER BY unit`
+  ).bind(...params).all<{ unit: string; added: number; removed: number }>();
+  const totalsByUnit = (unitTotals.results || []).map((r) => ({
+    unit: r.unit,
+    added: Math.round(r.added * 1000) / 1000,
+    removed: Math.round(r.removed * 1000) / 1000,
+  }));
+  const totals = {
+    total_added: totalsByUnit.reduce((a, r) => a + r.added, 0),
+    total_subtracted: totalsByUnit.reduce((a, r) => a + r.removed, 0),
+  };
 
   return c.json({
     transactions: txns.results || [],
+    // Kept for older app versions; the app shows totals_by_unit
     totals: {
-      total_added: totals?.total_added || 0,
-      total_subtracted: totals?.total_subtracted || 0,
+      total_added: totals.total_added,
+      total_subtracted: totals.total_subtracted,
     },
+    totals_by_unit: totalsByUnit,
     total: countResult?.total || 0,
     page,
     limit,
@@ -82,15 +102,15 @@ history.get('/', async (c) => {
  */
 history.post('/prepare-delete', async (c) => {
   const body = await c.req.json<{ date_from?: string; date_to?: string }>();
-  if (!body.date_from || !body.date_to) {
-    return c.json({ error: 'date_from and date_to are required' }, 400);
+  if (!isYmd(body.date_from) || !isYmd(body.date_to)) {
+    return c.json({ error: 'Choose a start and an end date (YYYY-MM-DD)' }, 400);
   }
 
   // Find all transactions in this range and capture a stable boundary
   const boundary = await c.env.DB.prepare(
     `SELECT COUNT(*) as count, MAX(rowid) as max_rowid, MIN(created_at) as earliest, MAX(created_at) as latest
      FROM transactions
-     WHERE created_at >= ? AND created_at < datetime(?, '+1 day')`
+     WHERE created_at >= ${IST_DAY_START_SQL} AND created_at < ${IST_DAY_END_SQL}`
   ).bind(body.date_from, body.date_to).first<{
     count: number; max_rowid: number; earliest: string; latest: string;
   }>();
@@ -144,14 +164,14 @@ history.post('/confirm-delete', async (c) => {
   // Fetch IDs of transactions to be deleted so CDC can propagate the deletions to offline devices
   const toDelete = await c.env.DB.prepare(
     `SELECT id FROM transactions
-     WHERE created_at >= ? AND created_at < datetime(?, '+1 day')
+     WHERE created_at >= ${IST_DAY_START_SQL} AND created_at < ${IST_DAY_END_SQL}
      AND rowid <= ?`
   ).bind(body.date_from, body.date_to, body.boundary_rowid).all<{ id: string }>();
 
   // Delete only transactions within the date range AND at or before the boundary rowid
   const result = await c.env.DB.prepare(
     `DELETE FROM transactions
-     WHERE created_at >= ? AND created_at < datetime(?, '+1 day')
+     WHERE created_at >= ${IST_DAY_START_SQL} AND created_at < ${IST_DAY_END_SQL}
      AND rowid <= ?`
   ).bind(body.date_from, body.date_to, body.boundary_rowid).run();
 

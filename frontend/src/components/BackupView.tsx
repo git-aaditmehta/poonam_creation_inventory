@@ -12,6 +12,8 @@ import * as XLSX from 'xlsx';
 import { api } from '../api';
 import type { StorageUsageResponse, PrepareDeleteResponse } from '../types';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
+import { formatIST, todayIST } from '../utils/time';
 
 export const BackupView: React.FC = () => {
   const { showToast } = useToast();
@@ -40,7 +42,7 @@ export const BackupView: React.FC = () => {
       const res = await api.backup.getStorageUsage();
       setUsage(res);
     } catch (err: any) {
-      showToast('error', 'Storage Usage Failed', err.message);
+      showToast('error', 'Storage Usage Failed', errorText(err));
     } finally {
       setIsLoadingUsage(false);
     }
@@ -104,11 +106,11 @@ export const BackupView: React.FC = () => {
       );
       XLSX.utils.book_append_sheet(wb, wsFoil, 'Foil');
 
-      const filename = `Poonam_Master_Data_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const filename = `Poonam_Master_Data_${todayIST()}.xlsx`;
       XLSX.writeFile(wb, filename);
       showToast('success', 'Master Data Exported', filename);
     } catch (err: any) {
-      showToast('error', 'Export Failed', err.message);
+      showToast('error', 'Export Failed', errorText(err));
     } finally {
       setIsExportingMaster(false);
     }
@@ -128,7 +130,7 @@ export const BackupView: React.FC = () => {
       const ws = XLSX.utils.json_to_sheet(
         res.transactions.map((t) => ({
           'Transaction ID': t.id,
-          'Timestamp': t.created_at,
+          'Date & time (IST)': formatIST(t.created_at),
           'Category': t.category,
           'Item Code': t.item_display_id,
           'Operation': t.operation.toUpperCase(),
@@ -147,7 +149,7 @@ export const BackupView: React.FC = () => {
       showToast('success', 'Transactions Exported', filename);
       return true;
     } catch (err: any) {
-      showToast('error', 'Export Failed', err.message);
+      showToast('error', 'Export Failed', errorText(err));
       return false;
     } finally {
       setIsExportingTx(false);
@@ -169,7 +171,7 @@ export const BackupView: React.FC = () => {
       setConfirmText('');
       showToast('info', 'Boundary Captured', `Identified ${res.count} transactions in boundary snapshot`);
     } catch (err: any) {
-      showToast('error', 'Prepare Failed', err.message);
+      showToast('error', 'Prepare Failed', errorText(err));
     } finally {
       setIsPreparing(false);
     }
@@ -217,7 +219,7 @@ export const BackupView: React.FC = () => {
       setIsBackupDownloaded(false);
       fetchStorageUsage();
     } catch (err: any) {
-      showToast('error', 'Purge Failed', err.message);
+      showToast('error', 'Purge Failed', errorText(err));
     } finally {
       setIsConfirming(false);
     }
@@ -269,10 +271,13 @@ export const BackupView: React.FC = () => {
           ) : usage ? (
             <div>
               <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--emerald-text)' }} className="mono">
-                {usage.r2.object_count} Images ({usage.r2.total_size_mb} MB)
+                {usage.r2.photo_file_count !== undefined
+                  ? `${Math.round(usage.r2.photo_file_count / 2)} Photos (${usage.r2.photo_size_mb} MB)`
+                  : `${usage.r2.object_count} Files (${usage.r2.total_size_mb} MB)`}
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-                Optimized high-res catalog photos & thumbnails stored in R2.
+                Jewelry photos (each stored as a full-size and a grid-size file).
+                {usage.r2.scanner_model_size_mb ? ` Also stored: the scanner model (${usage.r2.scanner_model_size_mb} MB), which phones download for Scan DINO.` : ''}
               </div>
             </div>
           ) : (

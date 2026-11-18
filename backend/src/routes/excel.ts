@@ -7,6 +7,14 @@ import {
   validateUnit, rupeesToPaisa, collectErrors,
 } from '../utils/validation';
 import { logSyncChange } from '../utils/syncLog';
+import { ITEM_KEY_SQL, itemKey, isDuplicateIdError, duplicateIdMessage } from '../utils/itemId';
+
+const CATEGORY_NAME: Record<string, string> = {
+  plated_jewelry: 'Plated Jewelry',
+  raw_jewelry: 'Raw Jewelry',
+  stones: 'Kundan Stone',
+  foil: 'Foil',
+};
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -128,12 +136,12 @@ excel.post('/validate-row', async (c) => {
   if (body.item_id && errors.length === 0) {
     const table = body.category;
     const existing = await c.env.DB.prepare(
-      `SELECT id, item_id FROM ${table} WHERE item_id = ?`
-    ).bind(body.item_id.trim()).first();
+      `SELECT id, item_id FROM ${table} WHERE ${ITEM_KEY_SQL} = ?`
+    ).bind(itemKey(body.item_id)).first<{ id: string; item_id: string }>();
     if (existing) {
       errors.push({
         field: 'item_id',
-        message: `Item "${body.item_id}" already exists in ${body.category.replace('_', ' ')}`,
+        message: duplicateIdMessage(body.item_id, existing.item_id, CATEGORY_NAME[table] || table),
       });
     }
   }
@@ -216,24 +224,29 @@ excel.post('/commit-row', async (c) => {
 
   // Check uniqueness
   const existing = await c.env.DB.prepare(
-    `SELECT id FROM ${table} WHERE item_id = ?`
-  ).bind(body.item_id.trim()).first();
+    `SELECT id, item_id FROM ${table} WHERE ${ITEM_KEY_SQL} = ?`
+  ).bind(itemKey(body.item_id)).first<{ id: string; item_id: string }>();
   if (existing) {
-    return c.json({ error: `Item "${body.item_id}" already exists` }, 409);
+    return c.json({ error: duplicateIdMessage(body.item_id, existing.item_id, CATEGORY_NAME[table] || table) }, 409);
   }
 
   const id = generateId();
 
-  if (costCents !== null) {
-    await c.env.DB.prepare(
-      `INSERT INTO ${table} (id, item_id, quantity, unit, low_stock_threshold, cost_price_cents)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold, costCents).run();
-  } else {
-    await c.env.DB.prepare(
-      `INSERT INTO ${table} (id, item_id, quantity, unit, low_stock_threshold)
-       VALUES (?, ?, ?, ?, ?)`
-    ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold).run();
+  try {
+    if (costCents !== null) {
+      await c.env.DB.prepare(
+        `INSERT INTO ${table} (id, item_id, quantity, unit, low_stock_threshold, cost_price_cents)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold, costCents).run();
+    } else {
+      await c.env.DB.prepare(
+        `INSERT INTO ${table} (id, item_id, quantity, unit, low_stock_threshold)
+         VALUES (?, ?, ?, ?, ?)`
+      ).bind(id, body.item_id.trim(), body.quantity, unit, body.low_stock_threshold).run();
+    }
+  } catch (err) {
+    if (isDuplicateIdError(err)) return c.json({ error: duplicateIdMessage(body.item_id, null, CATEGORY_NAME[table] || table) }, 409);
+    throw err;
   }
 
   // Fetch the created item and log CDC change for sync

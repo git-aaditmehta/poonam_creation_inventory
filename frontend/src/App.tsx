@@ -12,18 +12,22 @@ import { StonesView } from './components/StonesView';
 import { FoilView } from './components/FoilView';
 import { StockOperationsView } from './components/StockOperationsView';
 import { LowStockView } from './components/LowStockView';
-import { TransactionHistoryView } from './components/TransactionHistoryView';
-import { ExcelImportView } from './components/ExcelImportView';
+const TransactionHistoryView = lazy(() => import('./components/TransactionHistoryView').then((m) => ({ default: m.TransactionHistoryView })));
+const ExcelImportView = lazy(() => import('./components/ExcelImportView').then((m) => ({ default: m.ExcelImportView })));
 import { StaffManagementView } from './components/StaffManagementView';
-import { BackupView } from './components/BackupView';
+const BackupView = lazy(() => import('./components/BackupView').then((m) => ({ default: m.BackupView })));
 import { SyncQueueView } from './components/SyncQueueView';
-import { CostingView } from './components/CostingView';
-import { CostingMaterialsView } from './components/CostingMaterialsView';
+const CostingView = lazy(() => import('./components/CostingView').then((m) => ({ default: m.CostingView })));
+const CostingMaterialsView = lazy(() => import('./components/CostingMaterialsView').then((m) => ({ default: m.CostingMaterialsView })));
 import { SyncStatusBar } from './components/SyncStatusBar';
-import { ScanJewelryView } from './components/ScanJewelryView';
+const ScanJewelryView = lazy(() => import('./components/ScanJewelryView').then((m) => ({ default: m.ScanJewelryView })));
 const ScanDinoView = lazy(() => import('./components/ScanDinoView').then((m) => ({ default: m.ScanDinoView })));
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LLAMA_SCAN_ENABLED } from './config/features';
+import { saveLastUser, loadLastUser, clearLastUser, hasStoredToken, getQueueOwner, setQueueOwner } from './lib/lastUser';
+import { getPendingCount } from './lib/pendingOps';
+import { applyAppUpdate } from './lib/serviceWorker';
+import { syncGridPhotos, requestPersistentStorage } from './lib/photoOffline';
 import { Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -55,27 +59,131 @@ const AppContent: React.FC = () => {
     localDb.init();
   }, []);
 
-  // Verify auth session on initial load
+  /**
+   * Forget the signed-out user's inventory copy on this phone (Costing is kept: it is the owner's local data).
+   * `keepPendingOps` (expired login): unsent offline stock changes survive until someone logs in again.
+   */
+  const wipeLocalSession = useCallback(async (keepPendingOps = false) => {
+    syncEngine.stop();
+    clearLastUser();
+    if (!keepPendingOps) setQueueOwner(null);
+    try {
+      await localDb.ready;
+      await localDb.clearAll({ keepPendingOps });
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /** A verified login: remember the user; drop a queue left behind by a DIFFERENT user. */
+  const acceptVerifiedUser = useCallback(async (user: User) => {
+    saveLastUser(user);
+    const owner = getQueueOwner();
+    if (owner && owner !== user.id) {
+      try {
+        await localDb.ready;
+        await localDb.exec('DELETE FROM pending_ops');
+      } catch {
+        /* ignore */
+      }
+    }
+    setQueueOwner(user.id);
+    setCurrentUser(user);
+  }, []);
+
+  // Verify the login. Opens INSTANTLY with the last verified user (works offline) and checks in the
+  // background; only a real "not valid" answer from the server (401) logs out — never a missing network.
   const checkSession = useCallback(async () => {
+    const cached = hasStoredToken() ? loadLastUser() : null;
+    if (cached) {
+      setCurrentUser((prev) => prev ?? cached);
+      setIsInitializing(false);
+    }
+    if (!hasStoredToken()) {
+      setCurrentUser(null);
+      setIsInitializing(false);
+      return;
+    }
     try {
       const res = await api.auth.me();
-      setCurrentUser(res.user);
-    } catch {
-      setCurrentUser(null);
+      await acceptVerifiedUser(res.user);
+    } catch (err: any) {
+      if (err?.status === 401 || err?.status === 403) {
+        // The 401 handler (auth-unauthorized) clears the token and local data
+        setCurrentUser(null);
+      } else if (!cached) {
+        // No network and never verified on this phone: the login screen is the only option
+        setCurrentUser(null);
+      }
+      // else: offline / server unreachable → keep working with the cached user
     } finally {
       setIsInitializing(false);
     }
-  }, []);
+  }, [acceptVerifiedUser]);
 
   useEffect(() => {
     checkSession();
 
     const handleUnauthorized = () => {
+      wipeLocalSession(true); // keep unsent stock changes for the same user's next login
       setCurrentUser(null);
     };
+    // Back online after an offline start: confirm the login is still valid
+    const handleOnline = () => {
+      if (hasStoredToken()) checkSession();
+    };
     window.addEventListener('auth-unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth-unauthorized', handleUnauthorized);
-  }, [checkSession]);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('auth-unauthorized', handleUnauthorized);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [checkSession, wipeLocalSession]);
+
+  // Every grid photo kept on this phone (also offline): after login, after each sync, when back online.
+  // Storage is requested as permanent so the browser does not silently clear photos or offline data.
+  useEffect(() => {
+    if (!currentUser) return;
+    requestPersistentStorage();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = (delay: number) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => syncGridPhotos(), delay);
+    };
+    schedule(1500);
+    const onChange = () => schedule(3000);
+    const onOnline = () => schedule(1000);
+    window.addEventListener('localdb-change', onChange);
+    window.addEventListener('online', onOnline);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('localdb-change', onChange);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [currentUser]);
+
+  // A new app version has been downloaded in the background
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    const onUpdate = () => setUpdateReady(true);
+    window.addEventListener('app-update-available', onUpdate);
+    return () => window.removeEventListener('app-update-available', onUpdate);
+  }, []);
+
+  // A stock change made on this phone was refused by the server and has been undone: say so clearly
+  useEffect(() => {
+    const onRejected = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      const what = d.operation === 'add' ? `Adding ${d.quantity}` : `Removing ${d.quantity}`;
+      showToast(
+        'error',
+        `Stock change undone: ${d.itemId ?? 'item'}`,
+        `${what} was refused (${d.message}). The stock shown now is the real stock. Details in Sync Queue.`
+      );
+    };
+    window.addEventListener('stock-op-rejected', onRejected);
+    return () => window.removeEventListener('stock-op-rejected', onRejected);
+  }, [showToast]);
 
   // Start sync engine when user is logged in, stop on logout
   useEffect(() => {
@@ -124,14 +232,34 @@ const AppContent: React.FC = () => {
   }, [updateLowStockCount]);
 
   const handleLogout = async () => {
+    // Logging out must reach the server (so the login is cancelled there too)
+    if (!navigator.onLine) {
+      showToast('warning', 'You are offline', 'Logging out needs internet. Everything else keeps working offline.');
+      return;
+    }
+    // Unsent offline stock changes would be lost: try to send them first, then ask
+    try {
+      if ((await getPendingCount()) > 0) {
+        await syncEngine.triggerSync();
+        const left = await getPendingCount();
+        if (left > 0 && !window.confirm(`${left} stock change(s) on this phone have not reached the cloud yet (see Sync Queue). Log out anyway and lose them?`)) {
+          return;
+        }
+      }
+    } catch {
+      /* local DB unavailable: nothing to lose */
+    }
     try {
       await api.auth.logout();
-      syncEngine.stop();
-      setCurrentUser(null);
-      showToast('info', 'Logged Out', 'You have been signed out.');
     } catch (err: any) {
-      showToast('error', 'Logout Failed', err.message);
+      if (err?.status !== 401) {
+        showToast('error', 'Logout Failed', err.message);
+        return;
+      }
     }
+    await wipeLocalSession();
+    setCurrentUser(null);
+    showToast('info', 'Logged Out', 'You have been signed out.');
   };
 
   const handleQuickOperate = (category: InventoryCategory, item: BaseInventoryItem) => {
@@ -162,7 +290,13 @@ const AppContent: React.FC = () => {
   }
 
   if (!currentUser) {
-    return <LoginView onLoginSuccess={(user) => setCurrentUser(user)} />;
+    return (
+      <LoginView
+        onLoginSuccess={(user) => {
+          acceptVerifiedUser(user);
+        }}
+      />
+    );
   }
 
   return (
@@ -194,7 +328,23 @@ const AppContent: React.FC = () => {
 
         <SyncStatusBar />
 
+        {updateReady && (
+          <button
+            type="button"
+            onClick={applyAppUpdate}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
+              padding: '10px 14px', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+              background: 'var(--teal-deep)', color: '#fff',
+            }}
+          >
+            A new version of the app is ready — tap to update
+          </button>
+        )}
+
         <main className="main-content">
+        {/* Screens that use the Excel/PDF libraries load on first open (stored on the phone, so offline too) */}
+        <Suspense fallback={<div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>}>
         {activeTab === 'plated' && (
           <PlatedJewelryView
             user={currentUser}
@@ -271,6 +421,7 @@ const AppContent: React.FC = () => {
         {activeTab === 'backup' && currentUser.role === 'owner' && (
           <BackupView />
         )}
+        </Suspense>
         </main>
       </div>
     </div>

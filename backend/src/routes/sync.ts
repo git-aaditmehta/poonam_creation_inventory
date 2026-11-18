@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
+import { isLowStock } from '../utils/lowStock';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -20,7 +21,7 @@ function mapItemForSync(row: Record<string, unknown>, hasCost: boolean, role: st
     delete item.cost_price;
     delete item.cost_price_cents;
   }
-  item.is_low_stock = (row.quantity as number) < (row.low_stock_threshold as number);
+  item.is_low_stock = isLowStock(row.quantity as number, row.low_stock_threshold as number);
   return item;
 }
 
@@ -93,7 +94,7 @@ sync.get('/changes', authMiddleware, async (c) => {
           delete payload.cost_price_cents;
         }
         if (payload.quantity !== undefined && payload.low_stock_threshold !== undefined) {
-          payload.is_low_stock = payload.quantity < payload.low_stock_threshold;
+          payload.is_low_stock = isLowStock(payload.quantity, payload.low_stock_threshold);
         }
         
         return { ...row, payload: JSON.stringify(payload) };

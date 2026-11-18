@@ -13,10 +13,12 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
+import { isLowStock } from '../utils/lowStock';
+import { itemIdSearchSql } from '../utils/itemId';
 import { enqueuePendingOp, getAllPendingOps, type PendingOp } from '../lib/pendingOps';
+import { syncEngine } from '../lib/syncEngine';
 import type { InventoryCategory, BaseInventoryItem, User } from '../types';
 import { useToast } from '../context/ToastContext';
-import { parseFriendlyError } from '../utils/friendlyErrors';
 
 interface StockOperationsViewProps {
   user?: User;
@@ -58,9 +60,10 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         const table = category === 'plated_jewelry' ? 'plated_jewelry'
           : category === 'raw_jewelry' ? 'raw_jewelry'
           : category === 'stones' ? 'stones' : 'foil';
+        const q = itemIdSearchSql(searchTerm); // ignores capitals, spaces and dashes
         const items = await localDb.query<BaseInventoryItem>(
-          `SELECT * FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ? ORDER BY item_id ASC LIMIT 10`,
-          [`%${searchTerm.trim()}%`]
+          `SELECT * FROM ${table} WHERE is_deleted = 0 AND ${q.sql} ORDER BY item_id ASC LIMIT 10`,
+          q.params
         );
         setSearchResults(items);
       } catch {
@@ -209,8 +212,10 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
 
       showToast(
         'success',
-        `${operation === 'add' ? 'Added' : 'Subtracted'} ${changeQty} ${selectedItem.unit} (Offline Queued)`,
-        `New Balance: ${newBalance} ${selectedItem.unit} • Queued in Sync Queue`
+        `${operation === 'add' ? 'Added' : 'Subtracted'} ${changeQty} ${selectedItem.unit}${isOffline ? ' (Offline Queued)' : ''}`,
+        isOffline
+          ? `New Balance: ${newBalance} ${selectedItem.unit} • Queued in Sync Queue`
+          : `New Balance: ${newBalance} ${selectedItem.unit} • Saving to cloud…`
       );
 
       setLastReceipt({
@@ -224,7 +229,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         new_balance: newBalance,
         unit: selectedItem.unit,
         performed_by: user?.username || 'You (Offline)',
-        offline: true,
+        offline: isOffline,
       });
 
       setSelectedItem({
@@ -238,85 +243,19 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
       }
     };
 
-    if (isOffline) {
-      await executeOffline();
-      setIsSubmitting(false);
-      return;
-    }
-
+    // Instant everywhere: applied on this phone right away and sent in the background (immediately when
+    // online). The sync engine adopts the server's exact balance, or undoes it and explains if the server
+    // refuses (e.g. someone else sold the last piece first).
     try {
-      const res = await api.stock.operate({
-        category,
-        item_id: selectedItem.id,
-        operation,
-        quantity: changeQty,
-        idempotency_key: idempotencyKey,
-      });
-
-      // Synchronously update local SQLite so local reads stay in sync immediately
-      try {
-        await localDb.exec(
-          `UPDATE ${category} SET quantity = ?, updated_at = ? WHERE id = ?`,
-          [res.new_balance, nowIso, selectedItem.id]
-        );
-        await localDb.exec(
-          `INSERT INTO transactions
-            (id, category, item_id, item_display_id, operation, quantity_before,
-             quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            res.transaction_id || txId, category, selectedItem.id, selectedItem.item_id, operation,
-            res.previous_balance ?? currentQty, res.quantity_change ?? changeQty, res.new_balance, res.unit ?? selectedItem.unit,
-            user?.id || '', user?.username || 'Staff', idempotencyKey, nowIso
-          ]
-        );
-        window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: category } }));
-      } catch (dbErr) {
-        console.error('[StockOperations] Local DB sync error:', dbErr);
-      }
-
-      showToast(
-        'success',
-        `${operation === 'add' ? 'Added' : 'Subtracted'} ${changeQty} ${selectedItem.unit}`,
-        `New Balance: ${res.new_balance} ${res.unit}`
-      );
-
-      setLastReceipt({
-        ...res,
-        item_id: selectedItem.item_id,
-        category,
-        performed_by: user?.username || 'Staff',
-      });
-
-      // Update local item balance
-      setSelectedItem({
-        ...selectedItem,
-        quantity: res.new_balance,
-      });
-      setQuantity('');
-
-      if (onOperationSuccess) {
-        onOperationSuccess();
-      }
+      await executeOffline();
     } catch (err: any) {
-      const isNetworkErr =
-        !navigator.onLine ||
-        err.message === 'Failed to fetch' ||
-        err.message === 'Load failed' ||
-        err.message?.toLowerCase().includes('network') ||
-        err.message?.toLowerCase().includes('fetch') ||
-        err.status === 0;
-
-      if (isNetworkErr) {
-        // Network failed during request — fall back to offline queue!
-        await executeOffline();
-      } else {
-        const friendly = parseFriendlyError(err, { categoryName: category, itemId: selectedItem.item_id });
-        showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
-      }
+      // Could not even record it on this phone (storage unavailable): nothing changed, say so
+      showToast('error', 'Stock change not saved', `Nothing was changed: this phone could not record it (${err?.message || 'storage unavailable'}). Please try again.`);
+      return;
     } finally {
       setIsSubmitting(false);
     }
+    if (!isOffline) syncEngine.triggerSync();
   };
 
   return (
@@ -488,7 +427,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
                   style={{
                     fontSize: 22,
                     fontWeight: 700,
-                    color: selectedItem.quantity < selectedItem.low_stock_threshold ? 'var(--amber-text)' : 'var(--emerald-text)',
+                    color: isLowStock(selectedItem) ? 'var(--amber-text)' : 'var(--emerald-text)',
                   }}
                   className="mono"
                 >

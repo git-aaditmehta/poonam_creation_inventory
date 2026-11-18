@@ -26,6 +26,7 @@ import {
 } from './costingDb';
 import { roundTo2, normalizeQuantity, type CostingMaterialEntry } from './costingEngine';
 import { localDb } from './localDb';
+import { todayIST } from '../utils/time';
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ export function exportJewelryCostingWorkbook(
   multiplierX: number
 ): void {
   const wb = buildJewelryCostingWorkbook(records, categories, multiplierX);
-  const filename = `Jewelry_Costing_Backup_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const filename = `Jewelry_Costing_Backup_${todayIST()}.xlsx`;
   XLSX.writeFile(wb, filename);
 }
 
@@ -235,7 +236,7 @@ export function exportRawMaterialsWorkbook(
   materialsByCat: Record<string, CostingMaterial[]>
 ): void {
   const wb = buildRawMaterialsWorkbook(categories, materialsByCat);
-  const filename = `Costing_Raw_Materials_Backup_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const filename = `Costing_Raw_Materials_Backup_${todayIST()}.xlsx`;
   XLSX.writeFile(wb, filename);
 }
 

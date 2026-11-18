@@ -35,6 +35,7 @@ import { formatRupees, roundTo2 } from '../lib/costingEngine';
 import { exportRawMaterialsWorkbook } from '../lib/costingExcel';
 import { CostingExcelRestoreModal } from './CostingExcelRestoreModal';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 
 interface CostingMaterialsViewProps {
   onBack?: () => void;
@@ -90,7 +91,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
         if (updated) setSelectedCategory(updated);
       }
     } catch (err: any) {
-      showToast('error', 'Error loading categories', err.message);
+      showToast('error', 'Error loading categories', errorText(err));
     }
   }, [selectedCategory, showToast]);
 
@@ -104,7 +105,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       const list = await getCostingMaterialsByCategory(selectedCategory.id, searchQuery);
       setMaterials(list);
     } catch (err: any) {
-      showToast('error', 'Error loading materials', err.message);
+      showToast('error', 'Error loading materials', errorText(err));
     }
   }, [selectedCategory, searchQuery, showToast]);
 
@@ -130,7 +131,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       await fetchCategories();
       setSelectedCategory(newCat);
     } catch (err: any) {
-      showToast('error', 'Failed to create category', err.message);
+      showToast('error', 'Failed to create category', errorText(err));
     }
   };
 
@@ -145,7 +146,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       setCategoryNameInput('');
       await fetchCategories();
     } catch (err: any) {
-      showToast('error', 'Failed to rename category', err.message);
+      showToast('error', 'Failed to rename category', errorText(err));
     }
   };
 
@@ -166,7 +167,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       }
       await fetchCategories();
     } catch (err: any) {
-      showToast('error', 'Failed to delete category', err.message);
+      showToast('error', 'Failed to delete category', errorText(err));
     }
   };
 
@@ -234,7 +235,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       await fetchCategories();
       onMaterialsChanged?.();
     } catch (err: any) {
-      showToast('error', 'Failed to add material', err.message);
+      showToast('error', 'Failed to add material', errorText(err));
     }
   };
 
@@ -318,7 +319,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       await fetchCategories();
       onMaterialsChanged?.();
     } catch (err: any) {
-      showToast('error', 'Failed to update material', err.message);
+      showToast('error', 'Failed to update material', errorText(err));
     }
   };
 
@@ -350,7 +351,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       await fetchCategories();
       onMaterialsChanged?.();
     } catch (err: any) {
-      showToast('error', 'Failed to propagate price', err.message);
+      showToast('error', 'Failed to propagate price', errorText(err));
     }
   };
 
@@ -375,7 +376,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       await fetchCategories();
       onMaterialsChanged?.();
     } catch (err: any) {
-      showToast('error', 'Failed to delete material', err.message);
+      showToast('error', 'Failed to delete material', errorText(err));
     }
   };
 
@@ -388,7 +389,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       exportRawMaterialsWorkbook(categories, materialsByCat);
       showToast('success', 'Materials Exported', 'Raw Materials Excel backup generated locally.');
     } catch (err: any) {
-      showToast('error', 'Export Failed', err.message);
+      showToast('error', 'Export Failed', errorText(err));
     }
   };
 

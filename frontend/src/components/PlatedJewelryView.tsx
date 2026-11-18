@@ -18,15 +18,18 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
+import { isLowStock } from '../utils/lowStock';
+import { ITEM_KEY_SQL, itemKey } from '../utils/itemId';
 import { JewelryCategoryChips } from './JewelryCategoryChips';
 import { jewelryCategoryWhere, type JewelryCategory } from '../utils/jewelryCategory';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
+import { blockIfOffline, OFFLINE_TITLE } from '../utils/offlineGuard';
 import { processJewelryImage } from '../utils/imageProcessor';
-import { learnAfterUpload } from '../lib/dino/learnOnUpload';
+import { learnAfterUpload, learnResultMessage } from '../lib/dino/learnOnUpload';
 import { GeneratePdfButton } from './GeneratePdfButton';
 import { emitSyncStatus } from './SyncStatusBar';
-import { parseFriendlyError } from '../utils/friendlyErrors';
+import { parseFriendlyError, errorText } from '../utils/friendlyErrors';
 import { cacheImageBlob } from '../lib/imageCache';
 
 interface QueuedImage {
@@ -120,7 +123,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
       } catch {
-        showToast('error', 'Failed to load items', err.message);
+        showToast('error', 'Failed to load items', errorText(err));
       }
     } finally {
       setIsLoading(false);
@@ -236,10 +239,11 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (blockIfOffline(showToast, 'Adding an item')) return;
     const trimmedId = formItemId.trim();
     if (!trimmedId || formQty === '' || formThreshold === '' || formCost === '') {
       const friendly = parseFriendlyError('Validation: Please fill all required fields', { categoryName: 'Plated Jewelry' });
-      showToast('error', friendly.title, friendly.solution);
+      showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
       return;
     }
 
@@ -258,10 +262,17 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
     // Fast local duplicate check (<1ms)
     try {
-      const existing = await localDb.get('SELECT id FROM plated_jewelry WHERE item_id = ? AND is_deleted = 0', [trimmedId]);
+      // Same item if the ID differs only in capitals, spaces or dashes ("PS 365" = "ps-365")
+      const existing = await localDb.get<{ item_id: string }>(
+        `SELECT item_id FROM plated_jewelry WHERE ${ITEM_KEY_SQL} = ? AND is_deleted = 0`,
+        [itemKey(trimmedId)]
+      );
       if (existing) {
-        const friendly = parseFriendlyError('Item already exists', { categoryName: 'Plated Jewelry', itemId: trimmedId });
-        showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
+        showToast(
+          'error',
+          'Item ID already in use',
+          `"${trimmedId}" already exists${existing.item_id !== trimmedId ? ` as "${existing.item_id}"` : ''} in Plated Jewelry. IDs that differ only in capitals, spaces or dashes are the same item. To change its quantity, use Stock Operations.`
+        );
         return;
       }
     } catch { /* proceed */ }
@@ -282,6 +293,11 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         localThumbUrl = await cacheImageBlob(tempKey, processedImage.thumbBlob);
       } catch (imgErr) {
         console.warn('[PlatedJewelry] Local image processing error:', imgErr);
+        showToast(
+          'warning',
+          'Photo could not be read',
+          `${trimmedId} will be saved without a photo (the file may be damaged or in an unsupported format such as HEIC). Open the item later and upload the photo as JPG or PNG.`
+        );
       }
     }
 
@@ -316,7 +332,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
     // 2. Instant UI feedback & queue advance (<10ms)
     const savedId = trimmedId;
-    showToast('success', 'Item Added', `${savedId} saved to inventory`);
+    showToast('success', 'Item Added', `${savedId} added. Saving to the cloud…`);
 
     if (imageQueue.length > 0) {
       const updatedQueue = imageQueue.map((item, idx) => {
@@ -394,6 +410,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
               itemId: trimmedId,
               photoEtag: uploadRes.photo_etag,
               dinoInput: processedImage.dinoInput,
+            }).then((r) => {
+              const m = learnResultMessage(r, trimmedId);
+              if (m) showToast(m.type, m.title, m.message);
             });
 
             if (uploadedThumbKey) {
@@ -401,6 +420,11 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
             }
           } catch (imgErr: any) {
             console.warn('[PlatedJewelry] Background image upload error:', imgErr);
+            showToast(
+              'warning',
+              'Item saved, photo not uploaded',
+              `${trimmedId} is saved, but its photo did not upload (${imgErr?.message || 'connection problem'}). Open the item and upload the photo again.`
+            );
           }
         }
 
@@ -433,17 +457,27 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         const friendly = parseFriendlyError(err, { categoryName: 'Plated Jewelry', itemId: trimmedId });
 
         if (friendly.isOffline) {
+          // Internet dropped while saving: nothing reached the cloud, so take the item back off this screen
+          // (items are only ever created online — no false "saved locally" promise)
+          await localDb.deleteItem('plated_jewelry', clientId);
+          setItems((prev) => prev.filter((i) => i.id !== clientId));
+          setTotal((t) => Math.max(0, t - 1));
+          // The photo queue marked this photo "saved" optimistically: it was not, so flag it for a retry
+          setImageQueue((prev) => prev.map((q) => (q.savedItemId === trimmedId && q.status === 'saved' ? { ...q, status: 'error' as const } : q)));
           emitSyncStatus({
-            state: 'offline',
-            title: 'Working Offline',
-            message: `${trimmedId} safely saved locally. Will sync when reconnected.`,
-            solution: friendly.solution,
+            state: 'error',
+            title: OFFLINE_TITLE,
+            message: `${trimmedId} was NOT saved: the internet connection dropped.`,
+            solution: 'Connect to the internet and add it again. Stock in/out still works offline.',
             itemId: trimmedId,
             category: 'Plated Jewelry',
           });
+          showToast('warning', OFFLINE_TITLE, `${trimmedId} was not saved. Connect to the internet and add it again.`);
         } else {
           // Rollback on duplicate or invalid error
           await localDb.deleteItem('plated_jewelry', clientId);
+          // The photo queue marked this photo "saved" optimistically: it was not, so flag it for a retry
+          setImageQueue((prev) => prev.map((q) => (q.savedItemId === trimmedId && q.status === 'saved' ? { ...q, status: 'error' as const } : q)));
           setItems((prev) => prev.filter((i) => i.id !== clientId));
           setTotal((t) => Math.max(0, t - 1));
 
@@ -461,7 +495,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
             category: 'Plated Jewelry',
             error: friendly,
           });
-          showToast('error', friendly.title, friendly.solution);
+          showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
         }
       }
     })();
@@ -469,6 +503,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (blockIfOffline(showToast, 'Editing an item')) return;
     if (!activeItem) return;
 
     setIsSubmitting(true);
@@ -485,13 +520,14 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       fetchValuation();
     } catch (err: any) {
       const friendly = parseFriendlyError(err, { categoryName: 'Plated Jewelry', itemId: formItemId.trim() });
-      showToast('error', friendly.title, friendly.solution);
+      showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDelete = async (item: PlatedJewelryItem) => {
+    if (blockIfOffline(showToast, 'Deleting an item')) return;
     const stockMsg = item.quantity > 0 ? ` Note: still has ${item.quantity} ${item.unit} in stock.` : '';
     if (!confirm(`Are you sure you want to permanently delete ${item.item_id}?${stockMsg}`)) return;
     try {
@@ -507,7 +543,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       setDetailItem(null);
     } catch (err: any) {
       const friendly = parseFriendlyError(err, { categoryName: 'Plated Jewelry', itemId: item.item_id });
-      showToast('error', friendly.title, friendly.solution);
+      showToast('error', friendly.title, `${friendly.message} ${friendly.solution}`);
     }
   };
 
@@ -519,7 +555,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       const processed = await processJewelryImage(file);
       setPreviewThumb(processed.thumbDataUrl);
     } catch (err: any) {
-      showToast('error', 'Image Processing Failed', err.message);
+      showToast('error', 'Image Processing Failed', errorText(err));
     } finally {
       // Clear input value so selecting or capturing another photo with identical filename triggers onChange reliably on mobile
       e.target.value = '';
@@ -528,6 +564,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (blockIfOffline(showToast, 'Uploading a photo')) return;
     if (!selectedFile || !activeItem) return;
 
     setIsUploading(true);
@@ -541,11 +578,15 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       if (processed.aiBlob) formData.append('ai_image', processed.aiBlob, 'ai.jpg'); // used once for AI, not stored
       const uploadRes = await api.images.upload(formData);
       // Scan: learn the new photo now, from the original's pixels (background; never blocks or fails the upload)
+      const learnedItemId = activeItem.item_id;
       learnAfterUpload({
         itemUuid: activeItem.id,
-        itemId: activeItem.item_id,
+        itemId: learnedItemId,
         photoEtag: uploadRes.photo_etag,
         dinoInput: processed.dinoInput,
+      }).then((r) => {
+        const m = learnResultMessage(r, learnedItemId);
+        if (m) showToast(m.type, m.title, m.message);
       });
       showToast('success', 'Image Uploaded', `Image saved for ${activeItem.item_id}`);
       if (detailItem && detailItem.id === activeItem.id) {
@@ -563,7 +604,8 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       if (fileInput) fileInput.value = '';
       fetchItems();
     } catch (err: any) {
-      showToast('error', 'Upload Failed', err.message);
+      const friendly = parseFriendlyError(err, { categoryName: 'Plated Jewelry', itemId: activeItem.item_id });
+      showToast('error', friendly.title === 'Please check the entry' ? 'Photo not uploaded' : friendly.title, `${friendly.message} ${friendly.solution}`);
     } finally {
       setIsUploading(false);
     }
@@ -716,7 +758,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
           {items.map((item) => (
             <div
               key={item.id}
-              className={`card ${item.is_low_stock || item.quantity <= item.low_stock_threshold ? 'card-low-stock' : ''}`}
+              className={`card ${isLowStock(item) ? 'card-low-stock' : ''}`}
               style={{ display: 'flex', flexDirection: 'column', cursor: 'pointer' }}
               onClick={() => setDetailItem(item)}
             >
@@ -756,7 +798,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                 )}
 
                 {/* Low stock badge */}
-                {Boolean(item.is_low_stock || item.quantity <= item.low_stock_threshold) ? (
+                {isLowStock(item) ? (
                   <span
                     className="badge badge-amber"
                     style={{
@@ -1697,7 +1739,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                         const processed = await processJewelryImage(file);
                         setPreviewThumb(processed.thumbDataUrl);
                       } catch (err: any) {
-                        showToast('error', 'Image Processing Failed', err.message);
+                        showToast('error', 'Image Processing Failed', errorText(err));
                       }
                     }
                   }}

@@ -93,88 +93,84 @@ stock.post('/operate', authMiddleware, async (c) => {
   const wholeErr = validateWholeNumberFor(category, body.quantity, 'quantity');
   if (wholeErr) return c.json({ errors: [wholeErr], error: wholeErr.message }, 400);
   // 3-decimal rounding only removes floating-point noise (0.1 + 0.2); whole numbers pass through unchanged
-  const roundQty = (val: number) => Math.round(val * 1000) / 1000;
+  const changeQty = Math.round(body.quantity! * 1000) / 1000;
 
-  const changeQty = roundQty(body.quantity!);
-  const quantityBefore = roundQty(item.quantity);
-  let quantityAfter: number;
-
-  if (operation === 'add') {
-    quantityAfter = roundQty(quantityBefore + changeQty);
-  } else {
-    quantityAfter = roundQty(quantityBefore - changeQty);
-    if (quantityAfter < 0) {
-      return c.json({
-        error: 'Insufficient stock',
-        current_quantity: quantityBefore,
-        requested: changeQty,
-      }, 400);
-    }
+  // Early, friendly answer for an obvious shortfall (the atomic UPDATE below is the real guard)
+  if (operation === 'subtract' && Math.round(item.quantity * 1000) / 1000 < changeQty) {
+    return c.json({ error: 'Insufficient stock', current_quantity: item.quantity, requested: changeQty }, 400);
   }
 
   const txId = generateId();
+  const nowIso = new Date().toISOString();
 
-  // --- ATOMIC BATCH: update quantity + insert history ---
-  // The conditional UPDATE ensures concurrency safety:
-  //   For subtract: only succeeds if rounded quantity >= changeQty (prevents negative)
-  //   For add: only succeeds if rounded quantity matches expected (prevents lost updates)
+  // --- ATOMIC BATCH (one D1 transaction, all-or-nothing) ---
+  // 1. The database does the arithmetic ("quantity - 2"), so two people selling the same item at the same
+  //    moment are BOTH counted (the old code wrote a value computed from a stale read: 10-2 twice = 8).
+  //    Subtract only applies while enough stock is left, so stock can never go negative.
+  // 2. The history row and both sync rows are written ONLY if step 1 changed the row (changes() = 1 /
+  //    the transaction row exists). Before, a refused update still wrote a phantom history entry and sent
+  //    phones a wrong quantity.
+  // 3. All values in history and sync come from the row as actually updated, never from the earlier read.
   const updateSQL = operation === 'subtract'
-    ? `UPDATE ${table} SET quantity = ?, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0 AND ROUND(quantity, 3) >= ?`
-    : `UPDATE ${table} SET quantity = ?, updated_at = datetime('now') WHERE id = ? AND is_deleted = 0 AND ROUND(quantity, 3) = ?`;
+    ? `UPDATE ${table} SET quantity = ROUND(quantity - ?, 3), updated_at = datetime('now')
+       WHERE id = ? AND is_deleted = 0 AND ROUND(quantity, 3) >= ?`
+    : `UPDATE ${table} SET quantity = ROUND(quantity + ?, 3), updated_at = datetime('now')
+       WHERE id = ? AND is_deleted = 0`;
+  const updateBindings = operation === 'subtract' ? [changeQty, item.id, changeQty] : [changeQty, item.id];
 
-  const updateBindings = operation === 'subtract'
-    ? [quantityAfter, item.id, changeQty]
-    : [quantityAfter, item.id, quantityBefore];
-
+  // quantity_before is reconstructed from the updated row: after - change (add) or after + change (subtract)
+  const beforeExpr = operation === 'add' ? 'ROUND(quantity - ?, 3)' : 'ROUND(quantity + ?, 3)';
   const insertTxSQL = `INSERT INTO transactions
     (id, category, item_id, item_display_id, operation, quantity_before,
      quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    SELECT ?, ?, id, item_id, ?, ${beforeExpr}, ?, quantity, unit, ?, ?, ?
+    FROM ${table} WHERE id = ? AND changes() = 1`;
 
-  const nowIso = new Date().toISOString();
-  const updatedItemPayload = {
-    ...item,
-    quantity: quantityAfter,
-    updated_at: nowIso,
-  };
-  const txPayload = {
-    id: txId,
-    category,
-    item_id: item.id,
-    item_display_id: item.item_id,
-    operation,
-    quantity_before: quantityBefore,
-    quantity_change: changeQty,
-    quantity_after: quantityAfter,
-    unit: item.unit,
-    performed_by: session.userId,
-    performer_name: session.username,
-    idempotency_key: idempotencyKey,
-    created_at: nowIso,
-  };
+  const itemSyncSQL = `INSERT INTO sync_changes (entity_type, entity_id, operation, payload)
+    SELECT ?, id, 'UPDATE', json_object('id', id, 'item_id', item_id, 'quantity', quantity, 'unit', unit, 'updated_at', ?)
+    FROM ${table} WHERE id = ? AND EXISTS (SELECT 1 FROM transactions WHERE id = ?)`;
 
-  const batchResults = await c.env.DB.batch([
-    c.env.DB.prepare(updateSQL).bind(...updateBindings),
-    c.env.DB.prepare(insertTxSQL).bind(
-      txId, category, item.id, item.item_id, operation,
-      quantityBefore, changeQty, quantityAfter,
-      item.unit, session.userId, session.username, idempotencyKey
-    ),
-    c.env.DB.prepare(
-      `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) VALUES (?, ?, 'UPDATE', ?)`
-    ).bind(table, item.id, JSON.stringify(updatedItemPayload)),
-    c.env.DB.prepare(
-      `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) VALUES ('transactions', ?, 'CREATE', ?)`
-    ).bind(txId, JSON.stringify(txPayload)),
-  ]);
+  const txSyncSQL = `INSERT INTO sync_changes (entity_type, entity_id, operation, payload)
+    SELECT 'transactions', id, 'CREATE', json_object(
+      'id', id, 'category', category, 'item_id', item_id, 'item_display_id', item_display_id,
+      'operation', operation, 'quantity_before', quantity_before, 'quantity_change', quantity_change,
+      'quantity_after', quantity_after, 'unit', unit, 'performed_by', performed_by,
+      'performer_name', performer_name, 'idempotency_key', idempotency_key, 'created_at', created_at)
+    FROM transactions WHERE id = ?`;
 
-  // Check if the UPDATE actually changed a row (concurrency check)
-  const updateResult = batchResults[0];
-  if (!updateResult.meta.changed_db) {
-    return c.json({
-      error: 'Stock operation failed — inventory was modified concurrently. Please retry.',
-      current_quantity: quantityBefore,
-    }, 409);
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(updateSQL).bind(...updateBindings),
+      c.env.DB.prepare(insertTxSQL).bind(
+        txId, category, operation, changeQty, changeQty,
+        session.userId, session.username, idempotencyKey, item.id
+      ),
+      c.env.DB.prepare(itemSyncSQL).bind(table, nowIso, item.id, txId),
+      c.env.DB.prepare(txSyncSQL).bind(txId),
+    ]);
+  } catch (err) {
+    // Same idempotency key submitted twice at the same moment: the second one hits the UNIQUE key and the
+    // whole batch rolls back (no double count). Answer like a normal duplicate.
+    const dup = await c.env.DB.prepare(
+      `SELECT id, quantity_after FROM transactions WHERE idempotency_key = ?`
+    ).bind(idempotencyKey).first<{ id: string; quantity_after: number }>();
+    if (dup) {
+      return c.json({ success: true, duplicate: true, message: 'This operation was already processed', transaction_id: dup.id, new_balance: dup.quantity_after });
+    }
+    throw err;
+  }
+
+  const tx = await c.env.DB.prepare(
+    `SELECT quantity_before, quantity_change, quantity_after FROM transactions WHERE id = ?`
+  ).bind(txId).first<{ quantity_before: number; quantity_change: number; quantity_after: number }>();
+
+  if (!tx) {
+    // Nothing was written. Tell the caller why, from the current state.
+    const now = await c.env.DB.prepare(
+      `SELECT quantity FROM ${table} WHERE id = ? AND is_deleted = 0`
+    ).bind(item.id).first<{ quantity: number }>();
+    if (!now) return c.json({ error: 'Item not found' }, 404);
+    return c.json({ error: 'Insufficient stock', current_quantity: now.quantity, requested: changeQty }, 400);
   }
 
   return c.json({
@@ -182,9 +178,9 @@ stock.post('/operate', authMiddleware, async (c) => {
     transaction_id: txId,
     item_id: item.item_id,
     operation,
-    quantity_before: quantityBefore,
-    quantity_change: changeQty,
-    new_balance: quantityAfter,
+    quantity_before: tx.quantity_before,
+    quantity_change: tx.quantity_change,
+    new_balance: tx.quantity_after,
     unit: item.unit,
   });
 });

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { FileText, Loader2 } from 'lucide-react';
 import { api } from '../api';
-import { generateStockPdf, type GeneratedPdfResult } from '../utils/pdfGenerator';
+import { localDb } from '../lib/localDb';
+import type { ExportStockItem, GeneratedPdfResult } from '../utils/pdfGenerator';
 import { StockPdfModal } from './StockPdfModal';
 
 interface GeneratePdfButtonProps {
@@ -27,7 +28,21 @@ export const GeneratePdfButton: React.FC<GeneratePdfButtonProps> = ({
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      const res = await api.inventory.getExportAll(category);
+      // The phone's own copy first: instant and works offline. The cloud only if this phone has no copy yet.
+      const table = category.replace('-', '_') as 'plated_jewelry' | 'raw_jewelry' | 'stones' | 'foil';
+      let items: ExportStockItem[] = [];
+      try {
+        items = await localDb.getAllItems<ExportStockItem>(table);
+      } catch {
+        items = [];
+      }
+      if (items.length === 0 && navigator.onLine) {
+        const res = await api.inventory.getExportAll(category);
+        items = res.items || [];
+      }
+      // The PDF library is only downloaded when a PDF is actually made (keeps the app's startup small)
+      const { generateStockPdf } = await import('../utils/pdfGenerator');
+      const res = { items };
       if (!res.items || res.items.length === 0) {
         showToast?.('info', 'No Stock Found', `There are no active items in ${categoryTitle} to generate a statement.`);
         return;

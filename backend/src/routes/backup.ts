@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
+import { IST_DAY_START_SQL, IST_DAY_END_SQL, isYmd } from '../utils/time';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -74,12 +75,16 @@ backup.get('/transactions', async (c) => {
   let whereClause = 'WHERE 1=1';
   const params: unknown[] = [];
 
+  if ((dateFrom && !isYmd(dateFrom)) || (dateTo && !isYmd(dateTo))) {
+    return c.json({ error: 'Dates must be in the format YYYY-MM-DD' }, 400);
+  }
+  // Indian calendar days (00:00–24:00 IST); stored times are UTC
   if (dateFrom) {
-    whereClause += ' AND created_at >= ?';
+    whereClause += ` AND created_at >= ${IST_DAY_START_SQL}`;
     params.push(dateFrom);
   }
   if (dateTo) {
-    whereClause += ' AND created_at < datetime(?, "+1 day")';
+    whereClause += ` AND created_at < ${IST_DAY_END_SQL}`;
     params.push(dateTo);
   }
 
@@ -130,16 +135,36 @@ backup.get('/storage-usage', async (c) => {
   const d1TotalKb = Math.round((d1SizeBytes / 1024) * 100) / 100;
   const d1TotalMb = Math.round((d1SizeBytes / (1024 * 1024)) * 100) / 100;
 
-  // R2 object count
-  let r2ObjectCount = 0;
-  let r2TotalSize = 0;
+  // R2: jewelry photos (plated/...) counted separately from the scanner model (models/...), all pages
+  // (the old count stopped at 1,000 files and called every file an "image", the model included)
+  let photoCount = 0;
+  let photoBytes = 0;
+  let modelBytes = 0;
+  let otherCount = 0;
+  let otherBytes = 0;
   try {
-    const listed = await c.env.IMAGES.list({ limit: 1000 });
-    r2ObjectCount = listed.objects.length;
-    r2TotalSize = listed.objects.reduce((sum, obj) => sum + obj.size, 0);
+    let cursor: string | undefined;
+    for (let page = 0; page < 50; page++) {
+      const listed = await c.env.IMAGES.list({ limit: 1000, cursor });
+      for (const obj of listed.objects) {
+        if (obj.key.startsWith('plated/')) {
+          photoCount++;
+          photoBytes += obj.size;
+        } else if (obj.key.startsWith('models/')) {
+          modelBytes += obj.size;
+        } else {
+          otherCount++;
+          otherBytes += obj.size;
+        }
+      }
+      if (!listed.truncated) break;
+      cursor = listed.cursor;
+    }
   } catch {
     // R2 may not be enabled yet
   }
+  const mbOf = (b: number) => Math.round((b / (1024 * 1024)) * 100) / 100;
+  const r2TotalSize = photoBytes + modelBytes + otherBytes;
 
   return c.json({
     d1: {
@@ -150,9 +175,16 @@ backup.get('/storage-usage', async (c) => {
       total_size_mb: d1TotalMb,
     },
     r2: {
-      object_count: r2ObjectCount,
+      // Jewelry photos only (full + grid size: 2 files per item)
+      photo_file_count: photoCount,
+      photo_size_mb: mbOf(photoBytes),
+      // The on-device scanner model, served to phones from R2 (not a photo)
+      scanner_model_size_mb: mbOf(modelBytes),
+      other_file_count: otherCount,
+      // Everything in the bucket (kept for compatibility)
+      object_count: photoCount + otherCount,
       total_size_bytes: r2TotalSize,
-      total_size_mb: Math.round((r2TotalSize / (1024 * 1024)) * 100) / 100,
+      total_size_mb: mbOf(r2TotalSize),
     },
   });
 });

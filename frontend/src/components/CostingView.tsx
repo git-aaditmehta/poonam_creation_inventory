@@ -38,6 +38,7 @@ import { CostingMaterialsView } from './CostingMaterialsView';
 import { CostingExcelRestoreModal } from './CostingExcelRestoreModal';
 import { exportJewelryCostingWorkbook } from '../lib/costingExcel';
 import { useToast } from '../context/ToastContext';
+import { errorText } from '../utils/friendlyErrors';
 
 interface CostingViewProps {
   onExportJewelryExcel?: () => void;
@@ -111,7 +112,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       setCategories(cats);
       setCostings(records);
     } catch (err: any) {
-      showToast('error', 'Failed to load costing data', err.message);
+      showToast('error', 'Failed to load costing data', errorText(err));
     }
   }, [searchQuery, showToast]);
 
@@ -136,7 +137,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       showToast('success', 'Multiplier X Updated', `Recalculated all jewelry designs with X = ₹${rounded.toFixed(2)}`);
       await loadData();
     } catch (err: any) {
-      showToast('error', 'Failed to update X', err.message);
+      showToast('error', 'Failed to update X', errorText(err));
     }
   };
 
@@ -151,7 +152,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       setNewJewelryMaterials([]);
       setIsAddJewelryModalOpen(true);
     } catch (err: any) {
-      showToast('error', 'Error loading jewelry list', err.message);
+      showToast('error', 'Error loading jewelry list', errorText(err));
     }
   };
 
@@ -194,7 +195,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       setIsAddJewelryModalOpen(false);
       await loadData();
     } catch (err: any) {
-      showToast('error', 'Failed to save costing', err.message);
+      showToast('error', 'Failed to save costing', errorText(err));
     }
   };
 
@@ -218,7 +219,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       await loadData();
       showToast('success', 'Weight Updated', `Recalculated ${costing.item_id}`);
     } catch (err: any) {
-      showToast('error', 'Failed to update weight', err.message);
+      showToast('error', 'Failed to update weight', errorText(err));
     }
   };
 
@@ -245,7 +246,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       const avail = await getCostingMaterialsByCategory(category.id);
       setAvailableCategoryMaterials(avail);
     } catch (err: any) {
-      showToast('error', 'Error loading category materials', err.message);
+      showToast('error', 'Error loading category materials', errorText(err));
     }
 
     setSelectedAddMaterialId('');
@@ -346,7 +347,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       await loadData();
       showToast('success', 'Cell Updated', `Updated ${editingCell.categoryName} on ${costing.item_id}`);
     } catch (err: any) {
-      showToast('error', 'Failed to save cell', err.message);
+      showToast('error', 'Failed to save cell', errorText(err));
     }
   };
 
@@ -360,7 +361,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       showToast('success', 'Costing Removed', `Costing for ${costing.item_id} deleted.`);
       await loadData();
     } catch (err: any) {
-      showToast('error', 'Delete failed', err.message);
+      showToast('error', 'Delete failed', errorText(err));
     }
   };
 
@@ -371,7 +372,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       exportJewelryCostingWorkbook(costings, categories, multiplierX);
       showToast('success', 'Costing Exported', 'Jewelry Costing Excel backup generated locally.');
     } catch (err: any) {
-      showToast('error', 'Export Failed', err.message);
+      showToast('error', 'Export Failed', errorText(err));
     }
   };
 

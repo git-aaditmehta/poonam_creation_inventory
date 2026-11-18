@@ -11,10 +11,13 @@ import {
   WifiOff,
   HardDrive,
 } from 'lucide-react';
-import { getAllPendingOps, retryPendingOp, removePendingOp, type PendingOp } from '../lib/pendingOps';
+import { getAllPendingOps, getPendingCount, retryPendingOp, removePendingOp, type PendingOp } from '../lib/pendingOps';
 import { syncEngine, type SyncStatus } from '../lib/syncEngine';
 import { getStorageEstimate } from '../lib/imageCache';
+import { localDb } from '../lib/localDb';
+import { storedGridPhotoCount } from '../lib/photoOffline';
 import { useToast } from '../context/ToastContext';
+import { formatIST, parseTimestamp } from '../utils/time';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -24,8 +27,12 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
+/** "5m ago"; older than a week: the date in Indian time. Reads both stored time formats correctly. */
 function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const d = parseTimestamp(dateStr);
+  if (!d) return '—';
+  const diff = Math.max(0, Date.now() - d.getTime());
+  if (diff >= 7 * 86400000) return formatIST(d);
   if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
@@ -49,10 +56,20 @@ export const SyncQueueView: React.FC = () => {
     setIsLoading(false);
   }, []);
 
+  // Grid photos stored on this phone (all of them are kept for offline use)
+  const [photos, setPhotos] = useState<{ stored: number; total: number } | null>(null);
+
   const refreshStorage = useCallback(async () => {
     try {
       const est = await getStorageEstimate();
       setStorage(est);
+    } catch { /* ignore */ }
+    try {
+      await localDb.ready;
+      const row = await localDb.get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM plated_jewelry WHERE is_deleted = 0 AND thumb_key IS NOT NULL AND thumb_key != '' AND thumb_key NOT LIKE 'blob:%'"
+      );
+      setPhotos({ stored: await storedGridPhotoCount(), total: row?.n ?? 0 });
     } catch { /* ignore */ }
   }, []);
 
@@ -91,9 +108,28 @@ export const SyncQueueView: React.FC = () => {
   };
 
   const handleForceResync = async () => {
-    if (!confirm('This will clear all local data and re-download from cloud. Continue?')) return;
+    if (!navigator.onLine) {
+      showToast('warning', "You're offline", 'Re-downloading all data needs internet. Your data on this phone is unchanged.');
+      return;
+    }
+    let waiting = 0;
+    try {
+      waiting = await getPendingCount();
+    } catch {
+      waiting = 0;
+    }
+    const keepNote = waiting > 0
+      ? `\n\n${waiting} waiting change${waiting === 1 ? '' : 's'} will be kept and sent.`
+      : '';
+    if (!confirm(`Re-download all data from the cloud?${keepNote}`)) return;
+    showToast('info', 'Re-downloading data…', waiting > 0 ? `${waiting} waiting change(s) are kept and will be sent afterwards.` : 'This takes a few seconds.');
     await syncEngine.forceResync();
-    showToast('info', 'Re-syncing', 'Full data re-download started...');
+    const st = syncEngine.status;
+    if (st.bootstrapComplete && !st.error) {
+      showToast('success', 'Data re-downloaded', 'This phone now has the latest data from the cloud.');
+    } else {
+      showToast('error', 'Re-download failed', `${st.error || 'Please check the internet connection and try again.'} Waiting changes are still kept.`);
+    }
   };
 
   const statusIcon = (status: string) => {
@@ -201,6 +237,16 @@ export const SyncQueueView: React.FC = () => {
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
             {formatBytes(storage.used)} used{storage.quota > 0 ? ` / ${formatBytes(storage.quota)} available` : ''}
           </div>
+          {photos && photos.total > 0 && (
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Grid photos on this phone: <strong>{Math.min(photos.stored, photos.total)}</strong> of {photos.total}
+              {photos.stored >= photos.total
+                ? ' — all available offline'
+                : navigator.onLine
+                  ? ' — downloading the rest in the background'
+                  : ' — the rest download when you are back online'}
+            </div>
+          )}
           {storage.quota > 0 && (
             <div style={{
               marginTop: 8, height: 6, borderRadius: 3, background: 'var(--bg-hover)',
