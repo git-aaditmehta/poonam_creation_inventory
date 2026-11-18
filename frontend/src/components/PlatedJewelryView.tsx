@@ -18,9 +18,12 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
+import { JewelryCategoryChips } from './JewelryCategoryChips';
+import { jewelryCategoryWhere, type JewelryCategory } from '../utils/jewelryCategory';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { processJewelryImage } from '../utils/imageProcessor';
+import { learnAfterUpload } from '../lib/dino/learnOnUpload';
 import { GeneratePdfButton } from './GeneratePdfButton';
 import { emitSyncStatus } from './SyncStatusBar';
 import { parseFriendlyError } from '../utils/friendlyErrors';
@@ -49,6 +52,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [search, setSearch] = useState('');
+  // Jewelry-type chips: always start on All (not remembered)
+  const [jewelryCat, setJewelryCat] = useState<JewelryCategory | null>(null);
+  const [catCounts, setCatCounts] = useState<Record<string, number> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [valuation, setValuation] = useState<number | null>(null);
 
@@ -79,11 +85,17 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
   const fetchItems = useCallback(async (forceCloud = false) => {
     setIsLoading(true);
+    const catFilter = jewelryCat ? jewelryCategoryWhere(jewelryCat) : undefined;
+    // Chip counts come from this phone's copy (instant, offline); never block the list on them
+    const counts = await localDb.countByJewelryCategory('plated_jewelry').catch(() => null);
+    // No numbers until this phone's copy has data (a first load is served from the cloud): never show false zeros
+    setCatCounts(counts && counts.all > 0 ? counts : null);
     try {
       if (!forceCloud) {
         // Read from local SQLite (instant)
-        const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined);
-        if (res.total > 0 || !navigator.onLine) {
+        const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined, catFilter);
+        // With a chip selected, an empty result is real when this phone has items at all (no cloud round trip)
+        if (res.total > 0 || !navigator.onLine || (catFilter && (counts?.all ?? 0) > 0)) {
           setItems(res.items);
           setTotal(res.total);
           setTotalPages(res.totalPages || 1);
@@ -93,7 +105,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       }
 
       // Fallback to cloud API if local DB returned 0 items or forceCloud requested
-      const res = await api.inventory.listPlated({ page, limit: 30, search: search.trim() || undefined });
+      const res = await api.inventory.listPlated({ page, limit: 30, search: search.trim() || undefined, category: jewelryCat || undefined });
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
@@ -103,7 +115,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       }
     } catch (err: any) {
       try {
-        const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined);
+        const res = await localDb.getItemsPaginated<PlatedJewelryItem>('plated_jewelry', page, 30, search.trim() || undefined, catFilter);
         setItems(res.items);
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
@@ -113,7 +125,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     } finally {
       setIsLoading(false);
     }
-  }, [page, search, showToast]);
+  }, [page, search, jewelryCat, showToast]);
 
   const fetchValuation = useCallback(async (forceCloud = false) => {
     if (!isOwner) return;
@@ -262,7 +274,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
     // Instant local image processing (<15ms)
     let localThumbUrl = '';
-    let processedImage: { fullBlob: Blob; thumbBlob: Blob; aiBlob: Blob | null } | null = null;
+    let processedImage: { fullBlob: Blob; thumbBlob: Blob; aiBlob: Blob | null; dinoInput: Float32Array | null } | null = null;
     if (currentQueued) {
       try {
         processedImage = await processJewelryImage(currentQueued.file);
@@ -376,6 +388,13 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
             const uploadRes = await api.images.upload(formData);
             uploadedFullKey = uploadRes.image_key;
             uploadedThumbKey = uploadRes.thumb_key;
+            // Scan: learn this photo now, from the original's pixels (background; never blocks or fails the save)
+            learnAfterUpload({
+              itemUuid: authoritativeId,
+              itemId: trimmedId,
+              photoEtag: uploadRes.photo_etag,
+              dinoInput: processedImage.dinoInput,
+            });
 
             if (uploadedThumbKey) {
               await cacheImageBlob(uploadedThumbKey, processedImage.thumbBlob);
@@ -521,6 +540,13 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       formData.append('thumb_image', processed.thumbBlob, `thumb.${ext}`);
       if (processed.aiBlob) formData.append('ai_image', processed.aiBlob, 'ai.jpg'); // used once for AI, not stored
       const uploadRes = await api.images.upload(formData);
+      // Scan: learn the new photo now, from the original's pixels (background; never blocks or fails the upload)
+      learnAfterUpload({
+        itemUuid: activeItem.id,
+        itemId: activeItem.item_id,
+        photoEtag: uploadRes.photo_etag,
+        dinoInput: processed.dinoInput,
+      });
       showToast('success', 'Image Uploaded', `Image saved for ${activeItem.item_id}`);
       if (detailItem && detailItem.id === activeItem.id) {
         setDetailItem({
@@ -653,6 +679,15 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
           {items.length} of {total}
         </div>
       </div>
+
+      <JewelryCategoryChips
+        value={jewelryCat}
+        counts={catCounts}
+        onChange={(v) => {
+          setJewelryCat(v);
+          setPage(1);
+        }}
+      />
 
       {/* Grid */}
       {isLoading ? (
@@ -1426,7 +1461,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                     <input
                       id="create-plated-qty"
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       placeholder="e.g. 50"
@@ -1449,6 +1484,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                       <option value="KGS">KGS</option>
                       <option value="SET">SET</option>
                       <option value="JODI">JODI</option>
+                      <option value="GRMS">GRMS</option>
                     </select>
                   </div>
                 </div>
@@ -1461,7 +1497,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                     <input
                       id="create-plated-thresh"
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       placeholder="e.g. 10"
@@ -1585,12 +1621,13 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                       <option value="KGS">KGS</option>
                       <option value="SET">SET</option>
                       <option value="JODI">JODI</option>
+                      <option value="GRMS">GRMS</option>
                     </select>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Threshold</label>
                     <input
-                      type="number" step="any" min="0" className="input mono"
+                      type="number" step="1" min="0" className="input mono"
                       value={formThreshold}
                       onChange={(e) => setFormThreshold(e.target.value === '' ? '' : Number(e.target.value))}
                       required

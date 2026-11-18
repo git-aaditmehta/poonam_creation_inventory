@@ -145,18 +145,20 @@ export const api = {
 
   // Inventory
   inventory: {
-    listPlated: (params: { page?: number; limit?: number; search?: string } = {}) => {
+    listPlated: (params: { page?: number; limit?: number; search?: string; category?: string } = {}) => {
       const q = new URLSearchParams();
       if (params.page) q.set('page', params.page.toString());
       if (params.limit) q.set('limit', params.limit.toString());
       if (params.search) q.set('search', params.search);
+      if (params.category) q.set('category', params.category);
       return request<InventoryListResponse<PlatedJewelryItem>>(`/api/inventory/plated-jewelry?${q.toString()}`);
     },
-    listRaw: (params: { page?: number; limit?: number; search?: string } = {}) => {
+    listRaw: (params: { page?: number; limit?: number; search?: string; category?: string } = {}) => {
       const q = new URLSearchParams();
       if (params.page) q.set('page', params.page.toString());
       if (params.limit) q.set('limit', params.limit.toString());
       if (params.search) q.set('search', params.search);
+      if (params.category) q.set('category', params.category);
       return request<InventoryListResponse<RawJewelryItem>>(`/api/inventory/raw-jewelry?${q.toString()}`);
     },
     listStones: (params: { page?: number; limit?: number; search?: string } = {}) => {
@@ -290,7 +292,7 @@ export const api = {
   // Image Upload to R2
   images: {
     upload: (formData: FormData) =>
-      request<{ success: boolean; image_key: string; thumb_key: string }>('/api/images/upload', {
+      request<{ success: boolean; image_key: string; thumb_key: string; photo_etag?: string | null }>('/api/images/upload', {
         method: 'POST',
         body: formData,
       }),
@@ -341,10 +343,18 @@ export const api = {
   visualSearchDino: {
     status: () => request<DinoStatusResponse>('/api/visual-search-dino/status'),
     pending: () => request<DinoPendingResponse>('/api/visual-search-dino/pending'),
-    embed: (modelVersion: string, items: { id: string; vector: number[] }[]) =>
+    /**
+     * Save fingerprints. `photo_etag` (optional, per item, from the upload response): only save if the item still has exactly that photo.
+     * `onlyMissing`: never overwrite an item that is already learned by the current model.
+     */
+    embed: (
+      modelVersion: string,
+      items: { id: string; vector: number[]; photo_etag?: string }[],
+      options: { onlyMissing?: boolean } = {}
+    ) =>
       request<DinoEmbedResponse>('/api/visual-search-dino/embed', {
         method: 'POST',
-        body: JSON.stringify({ model_version: modelVersion, items }),
+        body: JSON.stringify({ model_version: modelVersion, items, ...(options.onlyMissing ? { only_missing: true } : {}) }),
       }),
     search: (modelVersion: string, vector: number[], category?: ScanCategory | null) =>
       request<DinoSearchResponse>('/api/visual-search-dino/search', {

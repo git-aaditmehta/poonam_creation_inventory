@@ -6,10 +6,11 @@ import {
   hashSessionToken, generateId,
 } from '../utils/crypto';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
+import { SESSION_DURATION_MS, sessionExpiryFrom } from '../utils/session';
 
 const auth = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
-const SESSION_DURATION_HOURS = 72; // 3 days
+// Session lifetime (30 days, renewed while the device is used): see utils/session.ts
 
 // In-memory sliding window rate limiter for login brute-force protection
 const failedAttempts = new Map<string, { count: number; lockedUntil: number }>();
@@ -102,7 +103,7 @@ auth.post('/login', async (c) => {
   const rawToken = generateSessionToken();
   const tokenHash = await hashSessionToken(rawToken);
   const sessionId = generateId();
-  const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000).toISOString();
+  const expiresAt = sessionExpiryFrom();
 
   await c.env.DB.prepare(
     `INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)`
@@ -123,7 +124,7 @@ auth.post('/login', async (c) => {
     secure: isHttps,
     sameSite: isHttps ? 'None' : 'Lax',
     path: '/',
-    maxAge: SESSION_DURATION_HOURS * 60 * 60,
+    maxAge: SESSION_DURATION_MS / 1000,
   });
 
   return c.json({

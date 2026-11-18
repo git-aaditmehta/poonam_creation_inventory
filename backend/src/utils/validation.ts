@@ -30,12 +30,28 @@ export function validateStrictPositiveNumber(value: unknown, field: string): Val
   return null;
 }
 
-const VALID_UNITS = ['PC', 'KGS', 'SET', 'JODI'] as const;
+/**
+ * Plated Jewelry, Raw Jewelry and Stones are counted (quantities), so they take whole numbers only.
+ * Only Foil is weighed and may have decimals. Decimals are refused, never silently rounded.
+ */
+export function allowsDecimals(category: string): boolean {
+  return category === 'foil';
+}
+
+export function validateWholeNumberFor(category: string, value: unknown, field: string): ValidationError | null {
+  if (allowsDecimals(category) || typeof value !== 'number' || !Number.isFinite(value)) return null; // other checks report bad numbers
+  if (!Number.isInteger(value)) {
+    return { field, message: `${field} must be a whole number (decimals are only allowed for Foil)` };
+  }
+  return null;
+}
+
+const VALID_UNITS = ['PC', 'KGS', 'SET', 'JODI', 'GRMS'] as const;
 export type Unit = typeof VALID_UNITS[number];
 
 export function validateUnit(value: unknown, field: string): ValidationError | null {
   if (!VALID_UNITS.includes(value as Unit)) {
-    return { field, message: `${field} must be one of: PC, KGS, SET, JODI` };
+    return { field, message: `${field} must be one of: ${VALID_UNITS.join(', ')}` };
   }
   return null;
 }

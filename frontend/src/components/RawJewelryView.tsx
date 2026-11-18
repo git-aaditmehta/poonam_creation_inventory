@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
+import { JewelryCategoryChips } from './JewelryCategoryChips';
+import { jewelryCategoryWhere, type JewelryCategory } from '../utils/jewelryCategory';
 import type { RawJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { GeneratePdfButton } from './GeneratePdfButton';
@@ -32,6 +34,9 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [search, setSearch] = useState('');
+  // Jewelry-type chips: always start on All (not remembered)
+  const [jewelryCat, setJewelryCat] = useState<JewelryCategory | null>(null);
+  const [catCounts, setCatCounts] = useState<Record<string, number> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Modals
@@ -48,10 +53,16 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
 
   const fetchItems = useCallback(async (forceCloud = false) => {
     setIsLoading(true);
+    const catFilter = jewelryCat ? jewelryCategoryWhere(jewelryCat) : undefined;
+    // Chip counts come from this phone's copy (instant, offline); never block the list on them
+    const counts = await localDb.countByJewelryCategory('raw_jewelry').catch(() => null);
+    // No numbers until this phone's copy has data (a first load is served from the cloud): never show false zeros
+    setCatCounts(counts && counts.all > 0 ? counts : null);
     try {
       if (!forceCloud) {
-        const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined);
-        if (res.total > 0 || !navigator.onLine) {
+        const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined, catFilter);
+        // With a chip selected, an empty result is real when this phone has items at all (no cloud round trip)
+        if (res.total > 0 || !navigator.onLine || (catFilter && (counts?.all ?? 0) > 0)) {
           setItems(res.items);
           setTotal(res.total);
           setTotalPages(res.totalPages || 1);
@@ -60,7 +71,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
         }
       }
 
-      const res = await api.inventory.listRaw({ page, limit: 30, search: search.trim() || undefined });
+      const res = await api.inventory.listRaw({ page, limit: 30, search: search.trim() || undefined, category: jewelryCat || undefined });
       setItems(res.items);
       setTotal(res.total);
       setTotalPages(res.totalPages || 1);
@@ -70,7 +81,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
       }
     } catch (err: any) {
       try {
-        const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined);
+        const res = await localDb.getItemsPaginated<RawJewelryItem>('raw_jewelry', page, 30, search.trim() || undefined, catFilter);
         setItems(res.items);
         setTotal(res.total);
         setTotalPages(res.totalPages || 1);
@@ -80,7 +91,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
     } finally {
       setIsLoading(false);
     }
-  }, [page, search, showToast]);
+  }, [page, search, jewelryCat, showToast]);
 
   useEffect(() => {
     fetchItems();
@@ -323,6 +334,15 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
         </div>
       </div>
 
+      <JewelryCategoryChips
+        value={jewelryCat}
+        counts={catCounts}
+        onChange={(v) => {
+          setJewelryCat(v);
+          setPage(1);
+        }}
+      />
+
       {/* Table */}
       {isLoading ? (
         <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
@@ -497,7 +517,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
                     </label>
                     <input
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       placeholder="e.g. 100"
@@ -518,6 +538,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
                       <option value="KGS">KGS</option>
                       <option value="SET">SET</option>
                       <option value="JODI">JODI</option>
+                      <option value="GRMS">GRMS</option>
                     </select>
                   </div>
                 </div>
@@ -528,7 +549,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
                   </label>
                   <input
                     type="number"
-                    step="any"
+                    step="1"
                     min="0"
                     className="input mono"
                     placeholder="e.g. 20"
@@ -593,6 +614,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
                       <option value="KGS">KGS</option>
                       <option value="SET">SET</option>
                       <option value="JODI">JODI</option>
+                      <option value="GRMS">GRMS</option>
                     </select>
                   </div>
 
@@ -600,7 +622,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
                     <label className="form-label">Low Stock Threshold</label>
                     <input
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       value={formThreshold}

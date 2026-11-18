@@ -16,6 +16,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
+import { isLlamaScanEnabled } from '../utils/features';
 import { CLOSE_CALL_MARGIN, RANK_VERSION, finalScore, scoreAttributes } from '../utils/jewelryRank';
 import {
   analyzeJewelryImage,
@@ -34,6 +35,14 @@ import {
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
 const visualSearch = new Hono<AppEnv>();
+
+// Switched off unless LLAMA_SCAN_ENABLED="true" (see utils/features.ts): nothing here may spend neurons then.
+visualSearch.use('*', async (c, next) => {
+  if (!isLlamaScanEnabled(c.env)) {
+    return c.json({ error: 'Scan Jewelry (cloud AI) is switched off. Use Scan DINO.', disabled: true }, 503);
+  }
+  await next();
+});
 
 // ─── Constants ───────────────────────────────────────────────────────
 const RESULT_COUNT = 6;

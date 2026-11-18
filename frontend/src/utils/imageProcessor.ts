@@ -12,10 +12,19 @@ export interface ProcessedImages {
   /**
    * Sharper copy (max 1120px, the most the vision model can use) sent ONLY for AI indexing
    * during upload and then discarded by the server. Not stored anywhere. Null if the source is
-   * not larger than the stored full image (nothing to gain).
+   * not larger than the stored full image (nothing to gain), or when the Llama scan is switched off.
    */
   aiBlob: Blob | null;
+  /**
+   * DINO scan input (1x3x224x224, normalised) taken from the ORIGINAL photo before compression, so the scanner
+   * learns from full-resolution pixels — never from the stored 900px or the 500px grid photo. Kept only in memory
+   * (~0.6 MB) and used once, right after the upload succeeds. Null if it could not be prepared (upload unaffected).
+   */
+  dinoInput: Float32Array | null;
 }
+
+import { LLAMA_SCAN_ENABLED } from '../config/features';
+import { preprocessToTensor } from '../lib/dino/preprocess';
 
 const AI_COPY_MAX_PX = 1120;
 const AI_COPY_QUALITY = 0.88;
@@ -29,6 +38,16 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
       img.onerror = () => reject(new Error('Failed to load image into DOM'));
       img.onload = () => {
         try {
+          // 1. Scanner input from the original, full-resolution photo — before any compression.
+          //    Never allowed to break the upload: on any problem the photo is simply learned later.
+          let dinoInput: Float32Array | null = null;
+          try {
+            dinoInput = preprocessToTensor(img, { sx: 0, sy: 0, sw: img.naturalWidth || img.width, sh: img.naturalHeight || img.height });
+          } catch (dinoErr) {
+            console.warn('[imageProcessor] DINO input preparation failed (photo will be learned later):', dinoErr);
+          }
+
+          // 2. Compression pipeline (unchanged)
           // Detect if WebP export is supported by browser; if not, use JPEG
           const format = isWebPExportSupported() ? 'image/webp' : 'image/jpeg';
 
@@ -42,7 +61,7 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
 
           // Temporary AI copy: only when the original has more detail than the stored 900px image
           const aiPromise: Promise<Blob | null> =
-            Math.max(img.width, img.height) > 900
+            LLAMA_SCAN_ENABLED && Math.max(img.width, img.height) > 900
               ? canvasToBlobSafe(resizeToCanvas(img, AI_COPY_MAX_PX, AI_COPY_MAX_PX).canvas, AI_COPY_QUALITY, 'image/jpeg').catch(() => null)
               : Promise.resolve(null);
 
@@ -56,6 +75,7 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
                     fullDataUrl,
                     thumbDataUrl,
                     aiBlob: await aiPromise,
+                    dinoInput,
                   });
                 })
                 .catch(reject);

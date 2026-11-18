@@ -23,6 +23,7 @@ import { SyncStatusBar } from './components/SyncStatusBar';
 import { ScanJewelryView } from './components/ScanJewelryView';
 const ScanDinoView = lazy(() => import('./components/ScanDinoView').then((m) => ({ default: m.ScanDinoView })));
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LLAMA_SCAN_ENABLED } from './config/features';
 import { Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -218,7 +219,7 @@ const AppContent: React.FC = () => {
             onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}
           />
         )}
-        {activeTab === 'scan' && (
+        {LLAMA_SCAN_ENABLED && activeTab === 'scan' && (
           <ScanJewelryView
             user={currentUser}
             onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}

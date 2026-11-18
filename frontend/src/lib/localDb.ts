@@ -9,6 +9,7 @@
  *   await localDb.ready;
  *   const rows = await localDb.query('SELECT * FROM stones WHERE item_id LIKE ?', ['%KD%']);
  */
+import { jewelryCategoryCaseSql } from '../utils/jewelryCategory';
 
 type PendingTask = {
   resolve: (value: any) => void;
@@ -156,39 +157,37 @@ class LocalSqlite {
     return rows.map((r) => this.normalizeItem<T>(r));
   }
 
-  /** Get paginated items from an inventory table. */
+  /**
+   * Get paginated items from an inventory table.
+   * `filter` (optional): an extra SQL condition with bound params, e.g. the jewelry-type chip.
+   */
   async getItemsPaginated<T>(
     table: string,
     page: number,
     limit: number,
-    search?: string
+    search?: string,
+    filter?: { sql: string; params: unknown[] }
   ): Promise<{ items: T[]; total: number; page: number; limit: number; totalPages: number }> {
     const validTables = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil'];
     if (!validTables.includes(table)) throw new Error(`Invalid table: ${table}`);
 
     const offset = (page - 1) * limit;
-
-    let countRow: any;
-    let rows: any[];
-
+    let where = 'WHERE is_deleted = 0';
+    const params: unknown[] = [];
     if (search && search.trim()) {
-      countRow = await this.get(
-        `SELECT COUNT(*) as total FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ?`,
-        [`%${search.trim()}%`]
-      );
-      rows = await this.query<T>(
-        `SELECT * FROM ${table} WHERE is_deleted = 0 AND item_id LIKE ? ORDER BY item_id ASC LIMIT ? OFFSET ?`,
-        [`%${search.trim()}%`, limit, offset]
-      );
-    } else {
-      countRow = await this.get(
-        `SELECT COUNT(*) as total FROM ${table} WHERE is_deleted = 0`
-      );
-      rows = await this.query<T>(
-        `SELECT * FROM ${table} WHERE is_deleted = 0 ORDER BY item_id ASC LIMIT ? OFFSET ?`,
-        [limit, offset]
-      );
+      where += ' AND item_id LIKE ?';
+      params.push(`%${search.trim()}%`);
     }
+    if (filter) {
+      where += ` AND ${filter.sql}`;
+      params.push(...filter.params);
+    }
+
+    const countRow: any = await this.get(`SELECT COUNT(*) as total FROM ${table} ${where}`, params);
+    const rows: any[] = await this.query<T>(
+      `SELECT * FROM ${table} ${where} ORDER BY item_id ASC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
 
     const items = rows.map((r) => this.normalizeItem<T>(r));
     const total = countRow?.total ?? 0;
@@ -199,6 +198,21 @@ class LocalSqlite {
       limit,
       totalPages: Math.ceil(total / limit) || 1,
     };
+  }
+
+  /** Item counts per jewelry type (from the ID prefix) for the filter chips; `all` is the total. */
+  async countByJewelryCategory(table: 'plated_jewelry' | 'raw_jewelry'): Promise<Record<string, number>> {
+    const expr = jewelryCategoryCaseSql();
+    const rows = await this.query<{ cat: string; n: number }>(
+      `SELECT ${expr.sql} AS cat, COUNT(*) AS n FROM ${table} WHERE is_deleted = 0 GROUP BY cat`,
+      expr.params
+    );
+    const counts: Record<string, number> = { all: 0 };
+    for (const r of rows) {
+      counts[r.cat] = Number(r.n) || 0;
+      counts.all += Number(r.n) || 0;
+    }
+    return counts;
   }
 
   /** Upsert a single item (INSERT OR REPLACE). */
@@ -232,8 +246,21 @@ class LocalSqlite {
     return (result?.changes ?? 0) > 0;
   }
 
+  /**
+   * Bulk writes run one at a time. Two of them used to overlap on a device's first load (background sync
+   * bootstrap + a list's cloud fallback), and the second BEGIN failed with "cannot start a transaction
+   * within a transaction", which made the first sync fail.
+   */
+  private bulkQueue: Promise<unknown> = Promise.resolve();
+
   /** Bulk upsert items (for bootstrap sync). */
-  async bulkUpsert(table: string, items: Record<string, any>[]): Promise<void> {
+  bulkUpsert(table: string, items: Record<string, any>[]): Promise<void> {
+    const run = this.bulkQueue.then(() => this.bulkUpsertNow(table, items));
+    this.bulkQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async bulkUpsertNow(table: string, items: Record<string, any>[]): Promise<void> {
     if (items.length === 0) return;
     const validTables = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil', 'transactions'];
     if (!validTables.includes(table)) throw new Error(`Invalid table: ${table}`);

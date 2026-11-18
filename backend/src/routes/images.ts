@@ -3,6 +3,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { logSyncChange } from '../utils/syncLog';
 import { embedCatalogItem } from '../utils/jewelryVision';
+import { isLlamaScanEnabled } from '../utils/features';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -112,7 +113,7 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     try { await c.env.IMAGES.delete(item.thumb_key); } catch { /* ignore */ }
   }
 
-  await c.env.IMAGES.put(imageKey, fullArrayBuffer, {
+  const storedFull = await c.env.IMAGES.put(imageKey, fullArrayBuffer, {
     httpMetadata: { contentType: fullImage.type || 'image/webp' },
   });
   await c.env.IMAGES.put(thumbKey, thumbArrayBuffer, {
@@ -141,7 +142,8 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
   // ── Auto-Embed: shared v2 pipeline (Vision JSON → canonical text → BGE-small) ──
   // Non-blocking: embedding failure does not prevent image upload success (backfill retries it).
   let embeddingStatus: 'success' | 'skipped' | 'failed' = 'skipped';
-  if (c.env.AI && c.env.VECTORIZE) {
+  // Switched off (no neurons spent) unless LLAMA_SCAN_ENABLED="true": see isLlamaScanEnabled.
+  if (isLlamaScanEnabled(c.env) && c.env.AI && c.env.VECTORIZE) {
     try {
       // Mark pending first so a failure here is picked up by backfill, not left on the old vector
       await c.env.DB.prepare(`UPDATE plated_jewelry SET embedding_generated_at = NULL WHERE id = ?`).bind(itemId).run();
@@ -158,7 +160,9 @@ images.post('/upload', authMiddleware, ownerOnly, async (c) => {
     }
   }
 
-  return c.json({ success: true, image_key: imageKey, thumb_key: thumbKey, embedding: embeddingStatus });
+  // photo_etag identifies exactly this photo (keys are stable across replacements); the DINO learn-on-upload
+  // sends it back so a late fingerprint can never be saved for a newer photo.
+  return c.json({ success: true, image_key: imageKey, thumb_key: thumbKey, photo_etag: storedFull?.etag ?? null, embedding: embeddingStatus });
 });
 
 /** GET /api/images/:key+ — serve image from R2 */

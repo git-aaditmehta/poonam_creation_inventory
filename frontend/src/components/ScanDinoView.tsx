@@ -193,15 +193,35 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
   }, [isOnline, fetchStatus]);
 
   // ═══ Camera ═══
+  // The live stream is tracked in a ref as well as state: cleanup code (leaving the tab, app going to the
+  // background) must always see the CURRENT stream. The old cleanup captured the stream from the first render
+  // (null), so leaving the tab never switched the camera off.
+  const streamRef = useRef<MediaStream | null>(null);
+  const mountedRef = useRef(true);
+  const resumeCameraRef = useRef(false); // camera was on when the app went to the background
+
+  const releaseStream = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
   const startCamera = useCallback(
     async (mode: 'environment' | 'user') => {
       setCameraError(null);
       try {
-        if (stream) stream.getTracks().forEach((t) => t.stop());
+        releaseStream();
         const newStream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: mode, width: { ideal: 1920 }, height: { ideal: 1080 } },
           audio: false,
         });
+        // Left the tab (or the app was backgrounded) while the permission prompt / camera start was pending
+        if (!mountedRef.current || document.visibilityState === 'hidden') {
+          newStream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        releaseStream(); // a second start may have finished first
+        streamRef.current = newStream;
         setStream(newStream);
         setCameraActive(true);
         if (videoRef.current) {
@@ -212,6 +232,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         const caps: any = track?.getCapabilities ? track.getCapabilities() : {};
         setHasTorch(Boolean(caps.torch));
       } catch (err: any) {
+        if (!mountedRef.current) return;
         setCameraActive(false);
         let msg = 'Unable to access camera.';
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -224,21 +245,24 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         setCameraError(msg);
       }
     },
-    [stream]
+    [releaseStream]
   );
 
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach((t) => t.stop());
-      setStream(null);
-    }
+    releaseStream();
+    setStream(null);
     setCameraActive(false);
     setTorchOn(false);
-  }, [stream]);
+  }, [releaseStream]);
 
+  // Open the camera when the tab opens; ALWAYS release it when leaving the tab
   useEffect(() => {
+    mountedRef.current = true;
     startCamera(facingMode);
-    return () => stopCamera();
+    return () => {
+      mountedRef.current = false;
+      releaseStream();
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -247,6 +271,28 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       videoRef.current.play().catch(() => undefined);
     }
   });
+
+  // Switching to another app (or locking the phone) must switch the camera off; coming back turns it on again
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (streamRef.current) {
+          resumeCameraRef.current = true;
+          stopCamera();
+        }
+      } else if (resumeCameraRef.current) {
+        resumeCameraRef.current = false;
+        startCamera(facingMode);
+      }
+    };
+    const onPageHide = () => releaseStream();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+    };
+  }, [facingMode, startCamera, stopCamera, releaseStream]);
 
   const handleToggleFacingMode = () => {
     const next = facingMode === 'environment' ? 'user' : 'environment';
@@ -940,8 +986,12 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
                                 <Check size={14} /> {selected ? 'Selected (tap to undo)' : 'This one'}
                               </button>
                               {onQuickOperate && (
-                                <button className="sj-icon-btn" onClick={() => onQuickOperate('plated_jewelry', m)} title="Stock action">
-                                  <ArrowUpDown size={14} />
+                                <button
+                                  className="sj-stock-btn"
+                                  onClick={() => onQuickOperate('plated_jewelry', m)}
+                                  title={`Stock in / out for ${m.item_id}`}
+                                >
+                                  <ArrowUpDown size={14} /> Stock in/out
                                 </button>
                               )}
                             </div>
@@ -1090,6 +1140,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         .sj-match-actions { display: flex; gap: 6px; margin-top: 6px; }
         .sj-this-btn { flex: 1; min-height: 40px; border-radius: var(--radius-md); border: 1px solid #10B981; background: #fff; color: #047857; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; cursor: pointer; }
         .sj-this-btn.on { background: #10B981; color: #fff; }
+        .sj-stock-btn { min-height: 40px; padding: 0 10px; border-radius: var(--radius-md); border: 1px solid var(--border-medium); background: var(--bg-surface-1); color: var(--text-primary); font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
         .sj-icon-btn { min-width: 40px; min-height: 40px; border-radius: var(--radius-md); border: 1px solid var(--border-medium); background: var(--bg-surface-1); color: var(--text-primary); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
         .sj-textarea, .sj-input { width: 100%; margin: 6px 0; padding: 10px; font-size: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-medium); background: var(--bg-surface-1); color: var(--text-primary); }
         .sj-sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 9999; display: flex; align-items: flex-end; justify-content: center; }

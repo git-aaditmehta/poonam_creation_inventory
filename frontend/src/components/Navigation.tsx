@@ -26,6 +26,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import type { User } from '../types';
+import { LLAMA_SCAN_ENABLED } from '../config/features';
 import type { SyncStatus } from '../lib/syncEngine';
 
 export type ActiveTab =
@@ -178,14 +179,16 @@ export const Navigation: React.FC<NavigationProps> = ({
             Actions
           </div>
           <div className="nav-group">
-            <button
-              className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
-              onClick={() => handleTabClick('scan')}
-              title="Scan Jewelry (AI Visual Search)"
-            >
-              <Camera size={18} />
-              <span>Scan Jewelry</span>
-            </button>
+            {LLAMA_SCAN_ENABLED && (
+              <button
+                className={`nav-item ${activeTab === 'scan' ? 'active' : ''}`}
+                onClick={() => handleTabClick('scan')}
+                title="Scan Jewelry (AI Visual Search)"
+              >
+                <Camera size={18} />
+                <span>Scan Jewelry</span>
+              </button>
+            )}
             <button
               className={`nav-item ${activeTab === 'scan-dino' ? 'active' : ''}`}
               onClick={() => handleTabClick('scan-dino')}
@@ -419,13 +422,15 @@ export const Navigation: React.FC<NavigationProps> = ({
           <Scroll size={18} />
           <span>Foil</span>
         </button>
-        <button
-          className={`mobile-nav-btn ${activeTab === 'scan' ? 'active' : ''}`}
-          onClick={() => setActiveTab('scan')}
-        >
-          <Camera size={18} />
-          <span>Scan</span>
-        </button>
+        {LLAMA_SCAN_ENABLED && (
+          <button
+            className={`mobile-nav-btn ${activeTab === 'scan' ? 'active' : ''}`}
+            onClick={() => setActiveTab('scan')}
+          >
+            <Camera size={18} />
+            <span>Scan</span>
+          </button>
+        )}
         <button
           className={`mobile-nav-btn ${activeTab === 'scan-dino' ? 'active' : ''}`}
           onClick={() => setActiveTab('scan-dino')}

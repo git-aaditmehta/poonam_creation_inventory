@@ -11,7 +11,7 @@ export interface User {
 
 export type InventoryCategory = 'plated_jewelry' | 'raw_jewelry' | 'stones' | 'foil';
 
-export type InventoryUnit = 'PC' | 'KGS' | 'SET' | 'JODI';
+export type InventoryUnit = 'PC' | 'KGS' | 'SET' | 'JODI' | 'GRMS';
 
 export interface BaseInventoryItem {
   id: string;

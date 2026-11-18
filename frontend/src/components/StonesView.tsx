@@ -601,7 +601,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
                     </label>
                     <input
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       placeholder="e.g. 500"
@@ -624,7 +624,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
                     </label>
                     <input
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       placeholder="e.g. 50"
@@ -699,7 +699,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
                     <label className="form-label">Low Stock Threshold</label>
                     <input
                       type="number"
-                      step="any"
+                      step="1"
                       min="0"
                       className="input mono"
                       value={formThreshold}

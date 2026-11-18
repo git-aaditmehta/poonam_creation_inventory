@@ -3,7 +3,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
 import {
-  validateString, validatePositiveNumber,
+  validateString, validatePositiveNumber, validateWholeNumberFor,
   validateUnit, rupeesToPaisa, collectErrors,
 } from '../utils/validation';
 import { logSyncChange } from '../utils/syncLog';
@@ -92,7 +92,7 @@ excel.post('/validate-row', async (c) => {
   if (body.quantity === undefined || body.quantity === null) {
     errors.push({ field: 'quantity', message: 'Please enter quantity' });
   } else {
-    const qErr = validatePositiveNumber(body.quantity, 'quantity');
+    const qErr = validatePositiveNumber(body.quantity, 'quantity') || validateWholeNumberFor(body.category, body.quantity, 'quantity');
     if (qErr) errors.push(qErr);
   }
 
@@ -100,14 +100,14 @@ excel.post('/validate-row', async (c) => {
   if (body.low_stock_threshold === undefined || body.low_stock_threshold === null) {
     errors.push({ field: 'low_stock_threshold', message: 'Low stock threshold is required' });
   } else {
-    const tErr = validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold');
+    const tErr = validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold') || validateWholeNumberFor(body.category, body.low_stock_threshold, 'low_stock_threshold');
     if (tErr) errors.push(tErr);
   }
 
   // Unit validation (required for plated/raw jewelry, fixed for stones/foil)
   if (body.category === 'plated_jewelry' || body.category === 'raw_jewelry') {
     if (!body.unit) {
-      errors.push({ field: 'unit', message: 'Unit selection is required (PC/KGS/SET/JODI)' });
+      errors.push({ field: 'unit', message: 'Unit selection is required (PC/KGS/SET/JODI/GRMS)' });
     } else {
       const uErr = validateUnit(body.unit, 'unit');
       if (uErr) errors.push(uErr);
@@ -173,14 +173,14 @@ excel.post('/commit-row', async (c) => {
   if (body.quantity === undefined || body.quantity === null) {
     errors.push({ field: 'quantity', message: 'Please enter quantity' });
   } else {
-    const qErr = validatePositiveNumber(body.quantity, 'quantity');
+    const qErr = validatePositiveNumber(body.quantity, 'quantity') || validateWholeNumberFor(body.category, body.quantity, 'quantity');
     if (qErr) errors.push(qErr);
   }
 
   if (body.low_stock_threshold === undefined || body.low_stock_threshold === null) {
     errors.push({ field: 'low_stock_threshold', message: 'Low stock threshold is required' });
   } else {
-    const tErr = validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold');
+    const tErr = validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold') || validateWholeNumberFor(body.category, body.low_stock_threshold, 'low_stock_threshold');
     if (tErr) errors.push(tErr);
   }
 

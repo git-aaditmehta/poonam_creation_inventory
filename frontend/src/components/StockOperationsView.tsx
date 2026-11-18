@@ -130,7 +130,10 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
   const numQty = typeof quantity === 'number' ? quantity : 0;
   const isFoil = category === 'foil';
   const rawProjected = operation === 'add' ? currentQty + numQty : currentQty - numQty;
-  const projectedBalance = isFoil ? Math.round(rawProjected * 1000) / 1000 : Math.round(rawProjected);
+  // Only Foil (weighed) has decimals; everything else is a whole-number count. Never round a count:
+  // a decimal is refused below. The 3-decimal rounding only removes floating-point noise.
+  const projectedBalance = Math.round(rawProjected * 1000) / 1000;
+  const hasDisallowedDecimal = !isFoil && typeof quantity === 'number' && !Number.isInteger(quantity);
   const isInsufficient = operation === 'subtract' && typeof quantity === 'number' && numQty > currentQty;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -143,6 +146,10 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
       showToast('error', 'Invalid Quantity', 'Please enter a positive quantity');
       return;
     }
+    if (hasDisallowedDecimal) {
+      showToast('error', 'Whole numbers only', 'Decimals are only allowed for Foil. Please enter a whole number.');
+      return;
+    }
     if (isInsufficient) {
       showToast('error', 'Insufficient Stock', `Cannot subtract ${quantity}. Only ${currentQty} in stock.`);
       return;
@@ -151,9 +158,9 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
     setIsSubmitting(true);
     // Generate crypto idempotency key & IDs
     const idempotencyKey = `op_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    const changeQty = isFoil ? Math.round(Number(quantity) * 1000) / 1000 : Math.round(Number(quantity));
+    const changeQty = Math.round(Number(quantity) * 1000) / 1000;
     const rawNewBalance = operation === 'add' ? currentQty + changeQty : currentQty - changeQty;
-    const newBalance = isFoil ? Math.round(rawNewBalance * 1000) / 1000 : Math.round(rawNewBalance);
+    const newBalance = Math.round(rawNewBalance * 1000) / 1000;
     const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
     const nowIso = new Date().toISOString();
     const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -546,14 +553,18 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
             <input
               id="stock-quantity"
               type="number"
-              step="any"
-              min="0.001"
-              className={`input mono ${isInsufficient ? 'error' : ''}`}
+              step={isFoil ? 'any' : '1'}
+              min={isFoil ? '0.001' : '1'}
+              inputMode={isFoil ? 'decimal' : 'numeric'}
+              className={`input mono ${isInsufficient || hasDisallowedDecimal ? 'error' : ''}`}
               placeholder="Enter amount..."
               value={quantity}
               onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
               required
             />
+            {hasDisallowedDecimal && (
+              <span className="form-error">Whole numbers only: decimals are allowed for Foil only.</span>
+            )}
             {isInsufficient && (
               <span className="form-error">
                 Cannot subtract {quantity}. Current balance is only {currentQty} {selectedItem?.unit}.

@@ -23,6 +23,7 @@ import type { InventoryCategory, StagingRow, InventoryUnit } from '../types';
 import { useToast } from '../context/ToastContext';
 import { localDb } from '../lib/localDb';
 import { syncEngine } from '../lib/syncEngine';
+import { normalizeUnit } from '../utils/units';
 import {
   parseExcelWorksheet,
   CATEGORY_FIELDS,
@@ -396,12 +397,8 @@ export const ExcelImportView: React.FC = () => {
       } else if (category === 'foil') {
         unit = 'KGS';
       } else {
-        const rawUnit = String(getFieldValue('unit', raw, idx, itemId) || '').trim().toUpperCase();
-        if (['PC', 'KGS', 'SET', 'JODI'].includes(rawUnit)) {
-          unit = rawUnit as InventoryUnit;
-        } else {
-          unit = 'PC';
-        }
+        // Recognises spellings like KG → KGS and GM / GRAMS → GRMS; anything else stays PC (as before)
+        unit = normalizeUnit(getFieldValue('unit', raw, idx, itemId)) ?? 'PC';
       }
 
       rowsToStage.push({
@@ -1515,7 +1512,7 @@ export const ExcelImportView: React.FC = () => {
                       <td>
                         <input
                           type="number"
-                          step="any"
+                          step={category === 'foil' ? 'any' : '1'}
                           className="input mono"
                           style={{ padding: '4px 8px', fontSize: 12, width: 80 }}
                           value={row.quantity}
@@ -1548,6 +1545,7 @@ export const ExcelImportView: React.FC = () => {
                             <option value="KGS">KGS</option>
                             <option value="SET">SET</option>
                             <option value="JODI">JODI</option>
+                            <option value="GRMS">GRMS</option>
                           </select>
                         )}
                       </td>
@@ -1556,7 +1554,7 @@ export const ExcelImportView: React.FC = () => {
                       <td>
                         <input
                           type="number"
-                          step="any"
+                          step={category === 'foil' ? 'any' : '1'}
                           className="input mono"
                           style={{ padding: '4px 8px', fontSize: 12, width: 80 }}
                           value={row.low_stock_threshold}

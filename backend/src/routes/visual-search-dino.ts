@@ -174,7 +174,13 @@ dino.post('/embed', authMiddleware, ownerOnly, async (c) => {
   if (!items || items.length === 0) return c.json({ error: 'items[] is required' }, 400);
   if (items.length > MAX_EMBED_BATCH) return c.json({ error: `At most ${MAX_EMBED_BATCH} items per request` }, 400);
 
-  const prepared: { id: string; values: number[] }[] = [];
+  // Optional guards used by learn-on-upload (bulk learning sends neither, so it behaves exactly as before):
+  //   only_missing: never overwrite an item already learned by the current model
+  //   items[].photo_etag: only save if the item's stored photo is still the one the vector was computed from
+  //                       (the R2 etag returned by the upload; protects against a slow phone saving a fingerprint
+  //                       of a photo that was replaced since — photo keys are stable, so the key can't tell)
+  const onlyMissing = body?.only_missing === true;
+  const prepared: { id: string; values: number[]; photoEtag: string | null }[] = [];
   const skipped: { id: string; reason: string }[] = [];
   for (const it of items) {
     const values = validVector(it?.vector);
@@ -182,27 +188,45 @@ dino.post('/embed', authMiddleware, ownerOnly, async (c) => {
       skipped.push({ id: String(it?.id ?? '?'), reason: 'invalid id or vector' });
       continue;
     }
-    prepared.push({ id: it.id, values });
+    if (it.photo_etag !== undefined && (typeof it.photo_etag !== 'string' || it.photo_etag.length > 128)) {
+      skipped.push({ id: it.id, reason: 'invalid photo_etag' });
+      continue;
+    }
+    prepared.push({ id: it.id, values, photoEtag: typeof it.photo_etag === 'string' ? it.photo_etag : null });
   }
   if (prepared.length === 0) return c.json({ success: false, embedded: 0, skipped }, 400);
 
   // Only embed items that still exist and have a photo
   const placeholders = prepared.map(() => '?').join(',');
   const { results } = await c.env.DB.prepare(
-    `SELECT id, item_id FROM plated_jewelry WHERE id IN (${placeholders}) AND is_deleted = 0 AND image_key IS NOT NULL`
+    `SELECT p.id, p.item_id, p.image_key, d.model_version AS done_model
+     FROM plated_jewelry p LEFT JOIN dino_embeddings d ON d.item_uuid = p.id
+     WHERE p.id IN (${placeholders}) AND p.is_deleted = 0 AND p.image_key IS NOT NULL`
   )
     .bind(...prepared.map((p) => p.id))
-    .all<{ id: string; item_id: string }>();
-  const live = new Map((results || []).map((r) => [r.id, r.item_id]));
+    .all<{ id: string; item_id: string; image_key: string; done_model: string | null }>();
+  const live = new Map((results || []).map((r) => [r.id, r]));
 
   const vectors = [];
   const accepted: typeof prepared = [];
   for (const p of prepared) {
-    const itemId = live.get(p.id);
-    if (!itemId) {
+    const row = live.get(p.id);
+    if (!row) {
       skipped.push({ id: p.id, reason: 'item deleted or has no photo' });
       continue;
     }
+    if (p.photoEtag !== null) {
+      const head = await c.env.IMAGES.head(row.image_key);
+      if (!head || head.etag !== p.photoEtag) {
+        skipped.push({ id: p.id, reason: 'photo changed since this fingerprint was made' });
+        continue;
+      }
+    }
+    if (onlyMissing && row.done_model === DINO_MODEL_VERSION) {
+      skipped.push({ id: p.id, reason: 'already learned' });
+      continue;
+    }
+    const itemId = row.item_id;
     vectors.push({
       id: p.id,
       values: p.values,

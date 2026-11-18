@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
+import { isJewelryCategory, jewelryCategoryWhere } from '../utils/jewelryCategory';
 import { generateId } from '../utils/crypto';
 import {
   collectErrors, validateRequired, validateString,
-  validatePositiveNumber, validateUnit,
+  validatePositiveNumber, validateUnit, validateWholeNumberFor,
   rupeesToPaisa, paisaToRupees,
 } from '../utils/validation';
 import { logSyncChange } from '../utils/syncLog';
@@ -65,6 +66,15 @@ function createCategoryRoutes(config: CategoryConfig) {
     if (search) {
       whereClause += ' AND item_id LIKE ?';
       params.push(`%${search}%`);
+    }
+
+    // Jewelry type chips (Plated / Raw only): ?category=earring|stud|jhumka|bracelet|pendant_set|other
+    const category = c.req.query('category');
+    if (category && (config.table === 'plated_jewelry' || config.table === 'raw_jewelry')) {
+      if (!isJewelryCategory(category)) return c.json({ error: 'Invalid category' }, 400);
+      const cw = jewelryCategoryWhere(category);
+      whereClause += ` AND ${cw.sql}`;
+      params.push(...cw.params);
     }
 
     const countResult = await c.env.DB.prepare(
@@ -132,6 +142,8 @@ function createCategoryRoutes(config: CategoryConfig) {
       validatePositiveNumber(body.quantity, 'quantity'),
       validateRequired(body.low_stock_threshold, 'low_stock_threshold'),
       validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold'),
+      validateWholeNumberFor(config.category, body.quantity, 'quantity'),
+      validateWholeNumberFor(config.category, body.low_stock_threshold, 'low_stock_threshold'),
       ...(config.fixedUnit === null ? [validateUnit(body.unit, 'unit')] : []),
       ...(config.hasCost ? [
         validateRequired(body.cost_price, 'cost_price'),
@@ -227,7 +239,8 @@ function createCategoryRoutes(config: CategoryConfig) {
     }
 
     if (body.low_stock_threshold !== undefined) {
-      const err = validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold');
+      const err = validatePositiveNumber(body.low_stock_threshold, 'low_stock_threshold')
+        || validateWholeNumberFor(config.category, body.low_stock_threshold, 'low_stock_threshold');
       if (err) return c.json({ errors: [err] }, 400);
       updates.push('low_stock_threshold = ?');
       params.push(body.low_stock_threshold);

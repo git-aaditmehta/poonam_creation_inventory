@@ -2,6 +2,7 @@ import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env, SessionData } from '../types';
 import { hashSessionToken } from '../utils/crypto';
+import { sessionExpiryFrom, shouldRenewSession } from '../utils/session';
 
 /**
  * Auth middleware: validates session token from cookie,
@@ -52,6 +53,23 @@ export async function authMiddleware(c: Context<{ Bindings: Env; Variables: { se
 
   if (!row.is_active) {
     return c.json({ error: 'Account is deactivated' }, 401);
+  }
+
+  // "Stays signed in while used": push the expiry 30 days ahead, at most once a day per session.
+  // A failed renewal never blocks the request (the session is still valid right now).
+  if (shouldRenewSession(row.expires_at)) {
+    const renewal = c.env.DB.prepare(`UPDATE sessions SET expires_at = ? WHERE id = ? AND is_revoked = 0`)
+      .bind(sessionExpiryFrom(), row.session_id)
+      .run()
+      .catch((e: unknown) => console.error('[auth] session renewal failed:', e));
+    let deferred = false;
+    try {
+      c.executionCtx.waitUntil(renewal);
+      deferred = true;
+    } catch {
+      /* no ExecutionContext (tests / local tools): just wait for it */
+    }
+    if (!deferred) await renewal;
   }
 
   c.set('session', {

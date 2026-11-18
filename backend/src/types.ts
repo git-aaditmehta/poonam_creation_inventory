@@ -7,6 +7,12 @@ export interface Env {
   OWNER_EMAIL: string;
   OWNER_PASSWORD: string;
   SESSION_SECRET?: string;
+  /**
+   * "true" switches the cloud Llama scan ("Scan Jewelry") back on. Absent/anything else = off (since 2026-11-18;
+   * the on-device DINO scan replaced it). Deliberately not declared in wrangler.jsonc `vars`, so deploying never
+   * touches other variables set in the Cloudflare dashboard.
+   */
+  LLAMA_SCAN_ENABLED?: string;
 }
 
 export interface AuthUser {

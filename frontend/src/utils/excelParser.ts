@@ -16,7 +16,7 @@ export interface ParsedExcelResult {
 const HEADER_KEYWORDS = [
   'id', 'code', 'item', 'product', 'design', 'casting', 'stone', 'foil',
   'name', 'description', 'title', 'qty', 'quantity', 'stock', 'pcs', 'pieces',
-  'kgs', 'kg', 'weight', 'set', 'jodi', 'unit', 'uom', 'min', 'low', 'threshold',
+  'kgs', 'kg', 'weight', 'set', 'jodi', 'grms', 'gms', 'grams', 'unit', 'uom', 'min', 'low', 'threshold',
   'safety', 'reorder', 'balance', 'closing', 'cost', 'price', 'rate', 'mrp',
   'amount', 'val', 'value', 'sr', 'no', 'sno', 'sales', 'purchase', 'status', 'date',
 ];
@@ -260,7 +260,7 @@ export const CATEGORY_FIELDS: Record<string, SystemFieldDef[]> = {
       key: 'unit',
       label: 'Measurement Unit',
       required: true,
-      description: 'PC, KGS, SET, or JODI',
+      description: 'PC, KGS, SET, JODI or GRMS',
       unitHint: 'Defaults to PC if not present in Excel',
       aliases: ['unit', 'uom', 'unit of measure', 'units', 'measurement'],
     },
@@ -298,7 +298,7 @@ export const CATEGORY_FIELDS: Record<string, SystemFieldDef[]> = {
       key: 'unit',
       label: 'Measurement Unit',
       required: true,
-      description: 'PC, KGS, SET, or JODI',
+      description: 'PC, KGS, SET, JODI or GRMS',
       unitHint: 'Defaults to PC if not present in Excel',
       aliases: ['unit', 'uom', 'unit of measure', 'units', 'measurement'],
     },

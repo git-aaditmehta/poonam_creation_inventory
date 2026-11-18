@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
-import { validateRequired, validateStrictPositiveNumber, collectErrors } from '../utils/validation';
+import { validateRequired, validateStrictPositiveNumber, collectErrors, validateWholeNumberFor } from '../utils/validation';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -88,8 +88,12 @@ stock.post('/operate', authMiddleware, async (c) => {
     return c.json({ error: 'Item not found' }, 404);
   }
 
-  const isFractional = category === 'foil';
-  const roundQty = (val: number) => isFractional ? Math.round(val * 1000) / 1000 : Math.round(val);
+  // Only Foil (weighed) may have decimals; everything else is counted in whole numbers.
+  // A decimal is refused with a clear message — never silently rounded (0.25 must not become 0).
+  const wholeErr = validateWholeNumberFor(category, body.quantity, 'quantity');
+  if (wholeErr) return c.json({ errors: [wholeErr], error: wholeErr.message }, 400);
+  // 3-decimal rounding only removes floating-point noise (0.1 + 0.2); whole numbers pass through unchanged
+  const roundQty = (val: number) => Math.round(val * 1000) / 1000;
 
   const changeQty = roundQty(body.quantity!);
   const quantityBefore = roundQty(item.quantity);
