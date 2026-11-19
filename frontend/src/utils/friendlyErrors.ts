@@ -1,3 +1,4 @@
+import { cloudLimitResetText } from './time';
 /**
  * friendlyErrors.ts
  *
@@ -66,6 +67,16 @@ export function createDiagnosticReport(
 /**
  * Translate any error object, HTTP response, or exception string into a FriendlyError.
  */
+/** The cloud's free daily read/write limit is used up (server answers code "daily_limit"). */
+export function isDailyLimitError(err: any): boolean {
+  return err?.data?.code === 'daily_limit' || err?.code === 'daily_limit';
+}
+
+export function dailyLimitMessage(err: any): string {
+  const what = err?.data?.kind === 'read' ? 'reading data' : 'saving changes';
+  return `The cloud's free daily limit for ${what} has been reached. It renews ${cloudLimitResetText()}.`;
+}
+
 export function parseFriendlyError(
   err: any,
   context: { categoryName?: string; itemId?: string; defaultTitle?: string } = {}
@@ -74,6 +85,17 @@ export function parseFriendlyError(
   const status = Number(err?.status || err?.statusCode || 0);
   const refCode = generateErrorRef();
   const rawDetails = err?.stack || JSON.stringify(err, null, 2) || rawMsg;
+
+  // 0. The cloud's free daily limit is used up: say so and when it renews
+  if (isDailyLimitError(err)) {
+    return {
+      title: 'Cloud daily limit reached',
+      message: `${context.itemId ? `"${context.itemId}" was not saved. ` : ''}${dailyLimitMessage(err)}`,
+      solution: 'Nothing already saved is lost. Stock in/out and Costing changes stay on this phone and upload automatically after the renewal; other changes can be made again then.',
+      refCode,
+      rawDetails,
+    };
+  }
 
   // 1. No internet. Adding, editing or deleting items and photo uploads only work online (agreed rule):
   //    nothing was saved, and the message must say so — never "saved on this device".
@@ -194,6 +216,7 @@ function humanizeFieldNames(msg: string): string {
 export function errorText(err: any): string {
   const raw = String(err?.message || err?.error || err || '').trim();
   const status = Number(err?.status || 0);
+  if (isDailyLimitError(err)) return dailyLimitMessage(err);
   if (
     (typeof navigator !== 'undefined' && !navigator.onLine) ||
     /Failed to fetch|NetworkError|net::ERR_|Load failed|Network lost/i.test(raw)

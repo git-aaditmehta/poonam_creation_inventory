@@ -11,6 +11,8 @@ import excel from './routes/excel';
 import sync from './routes/sync';
 import visualSearch from './routes/visual-search';
 import visualSearchDino from './routes/visual-search-dino';
+import costing from './routes/costing';
+import { dailyLimitKind, dailyLimitBody } from './utils/limits';
 
 const app = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
@@ -52,12 +54,19 @@ app.route('/api/excel', excel);
 app.route('/api/sync', sync);
 app.route('/api/visual-search', visualSearch);
 app.route('/api/visual-search-dino', visualSearchDino);
+app.route('/api/costing', costing);
 
 // Catch-all 404
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 // Global error handler
 app.onError((err, c) => {
+  // Free plan daily read/write limit used up: a clear answer the app understands (and queues wait instead of failing)
+  const limit = dailyLimitKind(err);
+  if (limit) {
+    console.warn(`[limits] D1 daily ${limit} limit reached`);
+    return c.json(dailyLimitBody(limit), 503);
+  }
   console.error('Unhandled error:', err.message);
   return c.json({ error: 'Internal server error' }, 500);
 });

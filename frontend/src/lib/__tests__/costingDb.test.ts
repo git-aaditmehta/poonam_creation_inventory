@@ -11,6 +11,7 @@ import {
   deleteCostingCategory,
   getCostingMaterialsByCategory,
   addCostingMaterial,
+  upsertCostingMaterial,
   updateCostingMaterial,
   canDeleteCostingMaterial,
   deleteCostingMaterial,
@@ -107,6 +108,14 @@ describe('costingDb - Local Database Access Layer', () => {
         extended_cost REAL DEFAULT NULL,
         weight REAL DEFAULT NULL,
         created_at TEXT NOT NULL DEFAULT ''
+      );
+
+      -- Cloud upload queue (same as lib/local-sqlite-worker.ts)
+      CREATE TABLE costing_dirty (
+        entity TEXT NOT NULL,
+        id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (entity, id)
       );
 
       -- Default seeds
@@ -343,6 +352,76 @@ describe('costingDb - Local Database Access Layer', () => {
 
       const j1Updated = await getJewelryCostingById(j1.id);
       expect(j1Updated?.cached_total_cost).toBe(50.00);
+    });
+  });
+
+  describe('Cloud upload queue (only what the owner types) and live prices', () => {
+    const dirty = () => db.prepare('SELECT entity, id, updated_at FROM costing_dirty ORDER BY entity, id').all() as any[];
+    const clearDirty = () => db.exec('DELETE FROM costing_dirty');
+
+    it('marks X, categories, materials and designs as "needs uploading"', async () => {
+      await setCostingMultiplierX(20);
+      const cat = await createCostingCategory('Beads');
+      const mat = await addCostingMaterial({ category_id: cat.id, name: 'Pearl', cost_price: 3 });
+      await saveJewelryCosting({ plated_jewelry_id: 'pj_1', weight: 2, materials: [{ categoryId: cat.id, materialId: mat.id, materialName: 'Pearl', quantity: 2, unitCost: 3 }] });
+      const keys = dirty().map((d) => `${d.entity}:${d.id.split('_')[0]}`);
+      expect(keys).toEqual(expect.arrayContaining(['setting:multiplier', 'category:cat', 'material:mat', 'jewelry:jc']));
+    });
+
+    it('deleting queues a deletion (row gone or flagged deleted)', async () => {
+      const cat = await createCostingCategory('Temp');
+      const mat = await addCostingMaterial({ category_id: 'ad_stone', name: 'Temp stone', cost_price: 1 });
+      clearDirty();
+      await deleteCostingCategory(cat.id);
+      await deleteCostingMaterial(mat.id);
+      const d = dirty();
+      expect(d.map((x) => x.id)).toEqual(expect.arrayContaining([cat.id, mat.id]));
+      const m = db.prepare('SELECT is_deleted, updated_at FROM costing_materials WHERE id = ?').get(mat.id) as any;
+      expect(m.is_deleted).toBe(1);
+      expect(m.updated_at).not.toBe('');
+    });
+
+    it('recalculations are derived: changing X or a price never queues the designs again', async () => {
+      const mat = await addCostingMaterial({ category_id: 'ad_stone', name: 'AD 2mm', cost_price: 2 });
+      const j = await saveJewelryCosting({ plated_jewelry_id: 'pj_1', weight: 1, materials: [{ categoryId: 'ad_stone', materialId: mat.id, materialName: 'AD 2mm', quantity: 3, unitCost: 2 }] });
+      const before = (db.prepare('SELECT updated_at FROM jewelry_costing WHERE id = ?').get(j.id) as any).updated_at;
+      clearDirty();
+      await recalculateAllJewelryWithX(25);
+      await propagateMaterialCostPrice(mat.id, 4);
+      const d = dirty();
+      expect(d.map((x) => x.entity).sort()).toEqual(['material', 'setting']); // only what was typed
+      const after = (db.prepare('SELECT updated_at FROM jewelry_costing WHERE id = ?').get(j.id) as any).updated_at;
+      expect(after).toBe(before); // "newest edit wins" is not fooled by a recalculation
+      const rec = await getJewelryCostingById(j.id);
+      expect(rec?.cached_total_cost).toBe(25 * 1 + 3 * 4);
+    });
+
+    it('Kundan stones are read-only in Costing (edited only in the Kundan Stone section)', async () => {
+      await expect(updateCostingMaterial('stone_1', { cost_price: 9 })).rejects.toThrow(/Kundan Stone section/);
+      await expect(propagateMaterialCostPrice('stone_1', 9)).rejects.toThrow(/Kundan Stone section/);
+      const st = db.prepare('SELECT cost_price FROM stones WHERE id = ?').get('stone_1') as any;
+      expect(st.cost_price).toBe(4);
+      await expect(addCostingMaterial({ category_id: 'kundan_stone', name: 'KUNDAN-Z', cost_price: 1 })).rejects.toThrow(/Kundan Stone section/);
+      await expect(upsertCostingMaterial({ category_id: 'kundan_stone', name: 'KUNDAN-A', cost_price: 1 })).rejects.toThrow(/Kundan Stone section/);
+      expect(dirty().length).toBe(0);
+    });
+
+    it('designs follow the CURRENT inventory stone price', async () => {
+      const j = await saveJewelryCosting({ plated_jewelry_id: 'pj_2', weight: 1, materials: [{ categoryId: 'kundan_stone', materialId: 'stone_1', materialName: 'KUNDAN-A', quantity: 2, unitCost: 4 }] });
+      expect((await getJewelryCostingById(j.id))?.cached_total_cost).toBe(18 + 8);
+      db.exec("UPDATE stones SET cost_price = 5, cost_price_cents = 500 WHERE id = 'stone_1'"); // changed in the inventory
+      expect((await getJewelryCostingById(j.id))?.cached_total_cost).toBe(18 + 10);
+      const all = await getAllJewelryCostings();
+      expect(all.find((x) => x.id === j.id)?.cached_total_cost).toBe(18 + 10);
+    });
+
+    it('a deleted material shows as "price missing", not an old price', async () => {
+      const mat = await addCostingMaterial({ category_id: 'mop', name: 'MOP 4', cost_price: 7 });
+      const j = await saveJewelryCosting({ plated_jewelry_id: 'pj_1', weight: 1, materials: [{ categoryId: 'mop', materialId: mat.id, materialName: 'MOP 4', quantity: 1, unitCost: 7 }] });
+      db.prepare('UPDATE costing_materials SET is_deleted = 1 WHERE id = ?').run(mat.id); // e.g. deleted on another device
+      const rec = await getJewelryCostingById(j.id);
+      expect(rec?.calculated?.missingPriceMaterials).toContain('MOP 4');
+      expect(rec?.is_complete).toBe(false);
     });
   });
 });

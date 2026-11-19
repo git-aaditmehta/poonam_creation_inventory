@@ -902,7 +902,7 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
         showToast(
           'success',
           'Jewelry Costing Restored',
-          `Successfully saved ${parts.join(', ')} jewelry costing record(s) locally.`
+          `Saved ${parts.join(", ")} jewelry costing record(s) on this device; they upload to the cloud automatically.`
         );
       } else {
         const validRows = stagedMaterials.filter((r) => r.isValid);
@@ -923,9 +923,15 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
         let matsNew = 0;
         let matsUpdated = 0;
 
+        let stonesSkipped = 0;
         for (const item of validRows) {
           const lower = item.categoryName.toLowerCase();
           let catId = catNameToId.get(lower);
+          // Kundan stones come only from the Kundan Stone section (agreed); never copied into Costing
+          if (catId === 'kundan_stone' || /^kundan[\s_-]*stones?$/.test(lower)) {
+            stonesSkipped++;
+            continue;
+          }
 
           if (!catId) {
             const newCat = await createCostingCategory(item.categoryName);
@@ -953,11 +959,16 @@ export const CostingExcelRestoreModal: React.FC<CostingExcelRestoreModalProps> =
         if (matsNew > 0) parts.push(`${matsNew} new`);
         if (matsUpdated > 0) parts.push(`${matsUpdated} updated`);
         if (catsCreated > 0) parts.push(`${catsCreated} new category(ies)`);
+        const stoneNote = stonesSkipped > 0
+          ? ` ${stonesSkipped} Kundan stone row(s) were skipped: stone names and prices come from the Kundan Stone section.`
+          : '';
 
         showToast(
           'success',
           'Raw Materials Restored',
-          `Saved ${parts.join(', ')} raw material(s) locally.`
+          parts.length > 0
+            ? `Saved ${parts.join(", ")} raw material(s) on this device; they upload to the cloud automatically.${stoneNote}`
+            : `Nothing new to save.${stoneNote}`
         );
       }
 

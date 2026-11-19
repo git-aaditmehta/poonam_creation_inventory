@@ -1,7 +1,7 @@
 /**
  * costingExcel.ts
  * 
- * Local-only Excel Backup & Restoration engine for the Costing system.
+ * Excel backup & restore for the Costing system (restored rows go through costingDb.ts, so they upload to the cloud like any edit).
  * Uses SheetJS (xlsx) strictly in-browser.
  * 
  * ZERO CLOUD DATA BOUNDARY:

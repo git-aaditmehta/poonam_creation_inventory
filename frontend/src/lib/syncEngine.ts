@@ -341,6 +341,9 @@ class SyncEngine {
       window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: 'all' } }));
     } catch (err: any) {
       console.error('[Sync] Bootstrap failed:', err);
+      if (err?.status === 503 && err?.data?.code === 'daily_limit') {
+        window.dispatchEvent(new CustomEvent('cloud-daily-limit', { detail: err.data }));
+      }
       this._updateStatus({ error: `Bootstrap failed: ${err.message}` });
     } finally {
       this._syncLock = false;
@@ -431,6 +434,13 @@ class SyncEngine {
           // Network error — stop pushing, will retry later
           await updatePendingOpStatus(op.id, 'PENDING');
           console.log('[Sync] Network lost during push, will retry later');
+          break;
+        }
+
+        if (err.status === 503 && err.data?.code === 'daily_limit') {
+          // The cloud's free daily limit is used up: keep this change (and the rest) waiting, try after the renewal
+          await updatePendingOpStatus(op.id, 'PENDING');
+          window.dispatchEvent(new CustomEvent('cloud-daily-limit', { detail: err.data }));
           break;
         }
 
@@ -534,6 +544,8 @@ class SyncEngine {
 
         if (isNetworkErr) {
           console.log('[Sync] Network lost during pull');
+        } else if (err.status === 503 && err.data?.code === 'daily_limit') {
+          window.dispatchEvent(new CustomEvent('cloud-daily-limit', { detail: err.data }));
         } else {
           console.error('[Sync] Pull error:', err);
         }

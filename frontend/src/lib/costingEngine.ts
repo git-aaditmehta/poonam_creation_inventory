@@ -1,7 +1,7 @@
 /**
  * costingEngine.ts
  * 
- * Core calculation and validation engine for the Private Local-Only Costing System.
+ * Core calculation and validation engine for the private (owner-only) Costing system.
  * All calculations use integer-paisa or strict 2-decimal arithmetic to prevent
  * floating-point drift.
  * 

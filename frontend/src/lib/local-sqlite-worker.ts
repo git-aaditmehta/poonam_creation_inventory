@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
   value TEXT NOT NULL
 );
 
--- Costing System Tables (Strictly Private & Local-Only, Never Cloud-Synced)
+-- Costing System Tables (owner only). Local copy of the cloud Costing data: works offline, synced by lib/costingSync.ts
 CREATE TABLE IF NOT EXISTS costing_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
@@ -176,6 +176,15 @@ CREATE TABLE IF NOT EXISTS jewelry_costing_materials (
 );
 CREATE INDEX IF NOT EXISTS idx_jcm_costing_id ON jewelry_costing_materials(jewelry_costing_id);
 CREATE INDEX IF NOT EXISTS idx_jcm_material_id ON jewelry_costing_materials(material_id);
+
+-- Costing rows changed on this device that still need uploading to the cloud (owner only).
+-- One entry per row however often it is edited; updated_at = time of the latest edit (lib/costingSync.ts).
+CREATE TABLE IF NOT EXISTS costing_dirty (
+  entity TEXT NOT NULL,
+  id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (entity, id)
+);
 `;
 
 // ── Initialization ─────────────────────────────────────────────

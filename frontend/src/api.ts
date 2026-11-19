@@ -343,6 +343,18 @@ export const api = {
   },
 
   // On-device DINOv2 visual search — separate feature, separate endpoints (no Workers AI)
+  // Costing in the cloud (owner only): see lib/costingSync.ts and backend/src/routes/costing.ts
+  costing: {
+    push: (changes: unknown[]) =>
+      request<{ success: boolean; rev: number; applied: { entity: string; id: string }[]; skipped: { entity?: string; id?: string; reason: string; merged_into?: string; current?: any }[] }>(
+        '/api/costing/push',
+        { method: 'POST', body: JSON.stringify({ changes }) }
+      ),
+    pull: (since: number) =>
+      request<{ changes: any[]; next_since: number; has_more: boolean; latest_rev: number }>(`/api/costing/pull?since=${since}`),
+    status: () => request<{ latest_rev: number; categories: number; materials: number; designs: number }>('/api/costing/status'),
+  },
+
   visualSearchDino: {
     status: () => request<DinoStatusResponse>('/api/visual-search-dino/status'),
     pending: () => request<DinoPendingResponse>('/api/visual-search-dino/pending'),

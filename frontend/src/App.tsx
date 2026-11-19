@@ -17,6 +17,7 @@ const ExcelImportView = lazy(() => import('./components/ExcelImportView').then((
 import { StaffManagementView } from './components/StaffManagementView';
 const BackupView = lazy(() => import('./components/BackupView').then((m) => ({ default: m.BackupView })));
 import { SyncQueueView } from './components/SyncQueueView';
+const CostingCloudGate = lazy(() => import('./components/CostingCloudGate').then((m) => ({ default: m.CostingCloudGate })));
 const CostingView = lazy(() => import('./components/CostingView').then((m) => ({ default: m.CostingView })));
 const CostingMaterialsView = lazy(() => import('./components/CostingMaterialsView').then((m) => ({ default: m.CostingMaterialsView })));
 import { SyncStatusBar } from './components/SyncStatusBar';
@@ -28,6 +29,8 @@ import { saveLastUser, loadLastUser, clearLastUser, hasStoredToken, getQueueOwne
 import { getPendingCount } from './lib/pendingOps';
 import { applyAppUpdate } from './lib/serviceWorker';
 import { syncGridPhotos, requestPersistentStorage } from './lib/photoOffline';
+import { dailyLimitMessage } from './utils/friendlyErrors';
+import { startCostingSync, stopCostingSync, syncCostingNow, costingWaitingCount, clearLocalCosting } from './lib/costingSync';
 import { Loader2 } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -83,6 +86,7 @@ const AppContent: React.FC = () => {
       try {
         await localDb.ready;
         await localDb.exec('DELETE FROM pending_ops');
+        await clearLocalCosting(); // a different person on this phone never sees the previous owner's Costing
       } catch {
         /* ignore */
       }
@@ -162,6 +166,22 @@ const AppContent: React.FC = () => {
     };
   }, [currentUser]);
 
+  // The cloud's free daily limit is used up: tell the user once (per 30 min) what that means and when it renews
+  useEffect(() => {
+    let lastShown = 0;
+    const onLimit = (e: Event) => {
+      if (Date.now() - lastShown < 30 * 60_000) return;
+      lastShown = Date.now();
+      showToast(
+        'warning',
+        'Cloud daily limit reached',
+        `${dailyLimitMessage({ data: (e as CustomEvent).detail })} Stock in/out and Costing changes stay on this phone and upload automatically then.`
+      );
+    };
+    window.addEventListener('cloud-daily-limit', onLimit);
+    return () => window.removeEventListener('cloud-daily-limit', onLimit);
+  }, [showToast]);
+
   // A new app version has been downloaded in the background
   const [updateReady, setUpdateReady] = useState(false);
   useEffect(() => {
@@ -169,6 +189,27 @@ const AppContent: React.FC = () => {
     window.addEventListener('app-update-available', onUpdate);
     return () => window.removeEventListener('app-update-available', onUpdate);
   }, []);
+
+  // Costing: synced with the cloud on the owner's devices only. Staff devices never keep Costing data.
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.role === 'owner') {
+      startCostingSync();
+    } else {
+      stopCostingSync();
+      clearLocalCosting().catch(() => undefined);
+    }
+    return () => stopCostingSync();
+  }, [currentUser]);
+
+  useEffect(() => {
+    const onNotice = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      showToast(d.type || 'info', d.title || 'Costing', d.message || '');
+    };
+    window.addEventListener('costing-notice', onNotice);
+    return () => window.removeEventListener('costing-notice', onNotice);
+  }, [showToast]);
 
   // A stock change made on this phone was refused by the server and has been undone: say so clearly
   useEffect(() => {
@@ -239,10 +280,16 @@ const AppContent: React.FC = () => {
     }
     // Unsent offline stock changes would be lost: try to send them first, then ask
     try {
-      if ((await getPendingCount()) > 0) {
-        await syncEngine.triggerSync();
-        const left = await getPendingCount();
-        if (left > 0 && !window.confirm(`${left} stock change(s) on this phone have not reached the cloud yet (see Sync Queue). Log out anyway and lose them?`)) {
+      if ((await getPendingCount()) > 0) await syncEngine.triggerSync();
+      if (currentUser?.role === 'owner') await syncCostingNow();
+      const left = await getPendingCount();
+      const leftCosting = currentUser?.role === 'owner' ? await costingWaitingCount() : 0;
+      if (left + leftCosting > 0) {
+        const parts = [
+          left > 0 ? `${left} stock change(s)` : '',
+          leftCosting > 0 ? `${leftCosting} Costing change(s)` : '',
+        ].filter(Boolean).join(' and ');
+        if (!window.confirm(`${parts} on this phone have not reached the cloud yet (see Sync Queue). Log out anyway and lose them?`)) {
           return;
         }
       }
@@ -258,6 +305,12 @@ const AppContent: React.FC = () => {
       }
     }
     await wipeLocalSession();
+    stopCostingSync();
+    try {
+      await clearLocalCosting(); // it is in the cloud; nothing of the owner's costs stays on this phone
+    } catch {
+      /* ignore */
+    }
     setCurrentUser(null);
     showToast('info', 'Logged Out', 'You have been signed out.');
   };
@@ -393,12 +446,16 @@ const AppContent: React.FC = () => {
         )}
         {activeTab === 'costing' && currentUser.role === 'owner' && (
           <ErrorBoundary fallbackTitle="Costing System Error">
-            <CostingView onNavigateToMaterials={() => setActiveTab('costing-materials')} />
+            <CostingCloudGate>
+              <CostingView onNavigateToMaterials={() => setActiveTab('costing-materials')} />
+            </CostingCloudGate>
           </ErrorBoundary>
         )}
         {activeTab === 'costing-materials' && currentUser.role === 'owner' && (
           <ErrorBoundary fallbackTitle="Costing Materials Error">
-            <CostingMaterialsView onNavigateToCosting={() => setActiveTab('costing')} />
+            <CostingCloudGate>
+              <CostingMaterialsView onNavigateToCosting={() => setActiveTab('costing')} onOpenKundanStones={() => setActiveTab('stones')} />
+            </CostingCloudGate>
           </ErrorBoundary>
         )}
         {activeTab === 'low-stock' && currentUser.role === 'owner' && (

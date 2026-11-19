@@ -1,11 +1,10 @@
 /**
  * costingDb.ts
- * 
- * Local-only Data Access Layer for the Costing feature.
- * Directly executes SQLite queries inside the local Web Worker via localDb.
- * 
- * ZERO CLOUD DATA BOUNDARY:
- * None of the queries here touch the network, APIs, syncEngine, or remote endpoints.
+ *
+ * Data access for Costing on this device (owner only). Reads and writes the local copy instantly (works offline).
+ * Everything the owner TYPES is marked "needs uploading" (costing_dirty) and lib/costingSync.ts uploads it to the
+ * cloud; changes from other devices arrive the same way. Totals are derived: they are recomputed here from the
+ * current prices and are never uploaded (keeps cloud writes tiny).
  */
 
 import { localDb } from './localDb';
@@ -68,6 +67,27 @@ export interface CostingJewelryRecord {
   updated_at: string;
 }
 
+// ── Cloud upload queue ───────────────────────────────────────────
+
+export type CostingEntity = 'setting' | 'category' | 'material' | 'jewelry';
+
+/** Kundan stone names and prices belong to the inventory (Kundan Stone section) and are not edited in Costing. */
+export const STONE_EDIT_MESSAGE = 'Kundan stone names and prices come from the Kundan Stone section. Change them there.';
+
+/** Mark a row the owner changed as "needs uploading" (one entry per row, however often it is edited). */
+async function markDirty(entity: CostingEntity, id: string, updatedAt: string): Promise<void> {
+  await localDb.exec(
+    `INSERT INTO costing_dirty (entity, id, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(entity, id) DO UPDATE SET updated_at = excluded.updated_at`,
+    [entity, id, updatedAt]
+  );
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('costing-dirty'));
+}
+
+async function isInventoryStone(id: string): Promise<boolean> {
+  return Boolean(await localDb.get<{ id: string }>('SELECT id FROM stones WHERE id = ?', [id]));
+}
+
 // ── Multiplier X Settings ────────────────────────────────────────
 
 export async function getCostingMultiplierX(): Promise<number> {
@@ -88,6 +108,7 @@ export async function setCostingMultiplierX(newX: number): Promise<void> {
     "INSERT OR REPLACE INTO costing_settings (key, value, updated_at) VALUES ('multiplier_x', ?, ?)",
     [valStr, now]
   );
+  await markDirty('setting', 'multiplier_x', now);
 }
 
 // ── Categories Management ────────────────────────────────────────
@@ -166,6 +187,7 @@ export async function createCostingCategory(name: string): Promise<CostingCatego
     'INSERT INTO costing_categories (id, name, sort_order, is_system, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
     [id, trimmed, nextOrder, now, now]
   );
+  await markDirty('category', id, now);
 
   return {
     id,
@@ -198,6 +220,7 @@ export async function updateCostingCategory(id: string, newName: string): Promis
     'UPDATE costing_categories SET name = ?, updated_at = ? WHERE id = ?',
     [trimmed, now, id]
   );
+  await markDirty('category', id, now);
 }
 
 export async function canDeleteCostingCategory(id: string): Promise<{ canDelete: boolean; reason?: string }> {
@@ -244,6 +267,7 @@ export async function deleteCostingCategory(id: string): Promise<void> {
   }
 
   await localDb.exec('DELETE FROM costing_categories WHERE id = ?', [id]);
+  await markDirty('category', id, new Date().toISOString()); // uploads as a deletion
 }
 
 // ── Materials Management ─────────────────────────────────────────
@@ -300,6 +324,7 @@ export async function addCostingMaterial(params: {
   weight?: number | null;
   cost_price?: number | null;
 }): Promise<CostingMaterial> {
+  if (params.category_id === 'kundan_stone') throw new Error(STONE_EDIT_MESSAGE);
   await localDb.ready;
   const now = new Date().toISOString();
   const id = `mat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -331,6 +356,7 @@ export async function addCostingMaterial(params: {
     'INSERT INTO costing_materials (id, category_id, name, weight, cost_price, is_deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
     [id, params.category_id, name, weight, cost_price, now, now]
   );
+  await markDirty('material', id, now);
 
   return {
     id,
@@ -356,6 +382,7 @@ export async function upsertCostingMaterial(params: {
   weight?: number | null;
   cost_price?: number | null;
 }): Promise<{ material: CostingMaterial; wasUpdated: boolean }> {
+  if (params.category_id === 'kundan_stone') throw new Error(STONE_EDIT_MESSAGE);
   await localDb.ready;
   const now = new Date().toISOString();
   const name = params.name.trim();
@@ -382,6 +409,7 @@ export async function upsertCostingMaterial(params: {
       'UPDATE costing_materials SET weight = ?, cost_price = ?, updated_at = ? WHERE id = ?',
       [weight, cost_price, now, existing.id]
     );
+    await markDirty('material', existing.id, now);
     return {
       material: { ...existing, weight, cost_price, updated_at: now },
       wasUpdated: true,
@@ -394,6 +422,7 @@ export async function upsertCostingMaterial(params: {
     'INSERT INTO costing_materials (id, category_id, name, weight, cost_price, is_deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
     [id, params.category_id, name, weight, cost_price, now, now]
   );
+  await markDirty('material', id, now);
 
   return {
     material: {
@@ -421,19 +450,9 @@ export async function updateCostingMaterial(
   await localDb.ready;
   const now = new Date().toISOString();
 
-  // Check if it's a stone in the stones table
-  const stone = await localDb.get<any>('SELECT * FROM stones WHERE id = ?', [id]);
-  if (stone) {
-    if (updates.cost_price !== undefined) {
-      const price = updates.cost_price !== null ? roundTo2(updates.cost_price) : 0;
-      const cents = Math.round(price * 100);
-      await localDb.exec(
-        'UPDATE stones SET cost_price = ?, cost_price_cents = ?, updated_at = ? WHERE id = ?',
-        [price, cents, now, id]
-      );
-    }
-    return;
-  }
+  // Kundan stones are inventory items: changed only in the Kundan Stone section (this used to change only this
+  // device's copy, which the next sync overwrote)
+  if (await isInventoryStone(id)) throw new Error(STONE_EDIT_MESSAGE);
 
   const existing = await localDb.get<CostingMaterial>('SELECT * FROM costing_materials WHERE id = ?', [id]);
   if (!existing) throw new Error('Material not found');
@@ -465,6 +484,7 @@ export async function updateCostingMaterial(
     'UPDATE costing_materials SET name = ?, weight = ?, cost_price = ?, updated_at = ? WHERE id = ?',
     [newName, newWeight, newPrice, now, id]
   );
+  await markDirty('material', id, now);
 }
 
 export async function canDeleteCostingMaterial(
@@ -495,7 +515,9 @@ export async function deleteCostingMaterial(materialId: string): Promise<void> {
     throw new Error(check.reason || 'Cannot delete referenced material');
   }
 
-  await localDb.exec('UPDATE costing_materials SET is_deleted = 1 WHERE id = ?', [materialId]);
+  const now = new Date().toISOString();
+  await localDb.exec('UPDATE costing_materials SET is_deleted = 1, updated_at = ? WHERE id = ?', [now, materialId]);
+  await markDirty('material', materialId, now); // uploads as a deletion
 }
 
 /**
@@ -511,20 +533,13 @@ export async function propagateMaterialCostPrice(
   const price = roundTo2(newPrice);
   const now = new Date().toISOString();
 
-  // 1. Update the master record
-  const stone = await localDb.get<any>('SELECT * FROM stones WHERE id = ?', [materialId]);
-  if (stone) {
-    const cents = Math.round(price * 100);
-    await localDb.exec(
-      'UPDATE stones SET cost_price = ?, cost_price_cents = ?, updated_at = ? WHERE id = ?',
-      [price, cents, now, materialId]
-    );
-  } else {
-    await localDb.exec(
-      'UPDATE costing_materials SET cost_price = ?, updated_at = ? WHERE id = ?',
-      [price, now, materialId]
-    );
-  }
+  // 1. Update the master record (the only thing uploaded; the per-design updates below are derived)
+  if (await isInventoryStone(materialId)) throw new Error(STONE_EDIT_MESSAGE);
+  await localDb.exec(
+    'UPDATE costing_materials SET cost_price = ?, updated_at = ? WHERE id = ?',
+    [price, now, materialId]
+  );
+  await markDirty('material', materialId, now);
 
   // 2. Find all affected jewelry_costing_materials
   const affectedRows = await localDb.query<CostingJewelryMaterialRow>(
@@ -558,8 +573,11 @@ export async function propagateMaterialCostPrice(
 
 // ── Jewelry Costing Engine Integration & Persistence ───────────────
 
-/** Internal helper to recalculate and persist a single jewelry_costing record */
-async function recalculateSingleJewelryCosting(
+/**
+ * Recalculate a design's stored total from its lines (derived data: never uploaded, and it does NOT change the
+ * design's updated_at, which records the owner's last edit for "newest edit wins").
+ */
+export async function recalculateSingleJewelryCosting(
   costingId: string,
   currentX: number
 ): Promise<void> {
@@ -584,11 +602,10 @@ async function recalculateSingleJewelryCosting(
   }));
 
   const calc = calculateJewelryCost(costing.weight, currentX, matEntries);
-  const now = new Date().toISOString();
 
   await localDb.exec(
-    'UPDATE jewelry_costing SET cached_total_cost = ?, is_complete = ?, updated_at = ? WHERE id = ?',
-    [calc.totalCost, calc.isComplete ? 1 : 0, now, costingId]
+    'UPDATE jewelry_costing SET cached_total_cost = ?, is_complete = ? WHERE id = ?',
+    [calc.totalCost, calc.isComplete ? 1 : 0, costingId]
   );
 }
 
@@ -602,6 +619,42 @@ export async function recalculateAllJewelryWithX(
     await recalculateSingleJewelryCosting(c.id, newX);
   }
   return { updatedCount: allCostings.length };
+}
+
+/**
+ * Current price of every material and Kundan stone. Designs always use these (not a price saved with the design),
+ * so changing a price, a stone price in the inventory, or X updates every design that uses it, on every device.
+ */
+async function buildLivePriceMap(): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const rawMats = await localDb.query<any>('SELECT id, category_id, name, cost_price FROM costing_materials WHERE is_deleted = 0 AND cost_price IS NOT NULL');
+    for (const rm of rawMats) {
+      map.set(rm.id, Number(rm.cost_price));
+      map.set(`${rm.category_id}::${String(rm.name).toLowerCase().trim()}`, Number(rm.cost_price));
+    }
+    const stones = await localDb.query<any>('SELECT id, item_id, cost_price, cost_price_cents FROM stones WHERE is_deleted = 0');
+    for (const sm of stones) {
+      const price = sm.cost_price !== null && sm.cost_price !== undefined && sm.cost_price > 0
+        ? Number(sm.cost_price)
+        : (sm.cost_price_cents ? sm.cost_price_cents / 100 : null);
+      if (price !== null) {
+        map.set(sm.id, price);
+        map.set(`kundan_stone::${String(sm.item_id).toLowerCase().trim()}`, price);
+      }
+    }
+  } catch {
+    // Non-fatal: lines then show as "price missing"
+  }
+  return map;
+}
+
+/** A design line's current unit price; null ("price missing") when its material no longer exists or has no price. */
+function livePrice(map: Map<string, number>, m: { material_id: string; category_id: string; material_name: string }): number | null {
+  const byId = map.get(m.material_id);
+  if (byId !== undefined) return byId;
+  const byName = m.category_id ? map.get(`${m.category_id}::${String(m.material_name).toLowerCase().trim()}`) : undefined;
+  return byName !== undefined ? byName : null;
 }
 
 export async function getAllJewelryCostings(
@@ -636,31 +689,8 @@ export async function getAllJewelryCostings(
   const rows = await localDb.query<any>(sql, params);
   const results: CostingJewelryRecord[] = [];
 
-  // Build lookup of current master material prices so updated prices propagate immediately
-  const masterPriceMap = new Map<string, number>();
-  try {
-    const rawMats = await localDb.query<any>('SELECT id, category_id, name, cost_price FROM costing_materials WHERE is_deleted = 0 AND cost_price IS NOT NULL');
-    for (const rm of rawMats) {
-      if (rm.cost_price !== null && rm.cost_price !== undefined) {
-        masterPriceMap.set(rm.id, Number(rm.cost_price));
-        masterPriceMap.set(`${rm.category_id}::${rm.name.toLowerCase().trim()}`, Number(rm.cost_price));
-        masterPriceMap.set(rm.name.toLowerCase().trim(), Number(rm.cost_price));
-      }
-    }
-    const stoneMats = await localDb.query<any>('SELECT id, item_id, cost_price, cost_price_cents FROM stones WHERE is_deleted = 0');
-    for (const sm of stoneMats) {
-      const price = sm.cost_price !== null && sm.cost_price !== undefined && sm.cost_price > 0 
-        ? Number(sm.cost_price) 
-        : (sm.cost_price_cents ? sm.cost_price_cents / 100 : null);
-      if (price !== null) {
-        masterPriceMap.set(sm.id, price);
-        masterPriceMap.set(`kundan_stone::${sm.item_id.toLowerCase().trim()}`, price);
-        masterPriceMap.set(sm.item_id.toLowerCase().trim(), price);
-      }
-    }
-  } catch {
-    // Non-fatal
-  }
+  // Current prices: every total follows the latest material and Kundan stone prices
+  const masterPriceMap = await buildLivePriceMap();
 
   for (const r of rows) {
     const matRows = await localDb.query<CostingJewelryMaterialRow>(
@@ -668,27 +698,15 @@ export async function getAllJewelryCostings(
       [r.id]
     );
 
-    const materials: CostingMaterialEntry[] = matRows.map((m) => {
-      let unitCost = m.unit_cost;
-      if ((unitCost === null || unitCost === undefined) && m.material_id) {
-        const scopedKey = m.category_id ? `${m.category_id}::${m.material_name.toLowerCase().trim()}` : '';
-        const found = masterPriceMap.get(m.material_id) 
-          ?? (scopedKey ? masterPriceMap.get(scopedKey) : undefined)
-          ?? masterPriceMap.get(m.material_name.toLowerCase().trim());
-        if (found !== undefined) {
-          unitCost = found;
-        }
-      }
-      return {
-        id: m.id,
-        categoryId: m.category_id,
-        materialId: m.material_id,
-        materialName: m.material_name,
-        quantity: m.quantity,
-        unitCost,
-        weight: m.weight,
-      };
-    });
+    const materials: CostingMaterialEntry[] = matRows.map((m) => ({
+      id: m.id,
+      categoryId: m.category_id,
+      materialId: m.material_id,
+      materialName: m.material_name,
+      quantity: m.quantity,
+      unitCost: livePrice(masterPriceMap, m),
+      weight: m.weight,
+    }));
 
     const calc = calculateJewelryCost(r.weight, currentX, materials);
 
@@ -741,13 +759,14 @@ export async function getJewelryCostingById(
     [r.id]
   );
 
+  const prices = await buildLivePriceMap();
   const materials: CostingMaterialEntry[] = matRows.map((m) => ({
     id: m.id,
     categoryId: m.category_id,
     materialId: m.material_id,
     materialName: m.material_name,
     quantity: m.quantity,
-    unitCost: m.unit_cost,
+    unitCost: livePrice(prices, m),
     weight: m.weight,
   }));
 
@@ -851,6 +870,8 @@ export async function saveJewelryCosting(data: {
     ]);
   }
 
+  await markDirty('jewelry', costingId, now);
+
   // Fetch plated jewelry metadata for clean return
   const pj = await localDb.get<any>(
     'SELECT item_id, image_key, thumb_key FROM plated_jewelry WHERE id = ? OR item_id = ?',
@@ -877,6 +898,7 @@ export async function deleteJewelryCosting(id: string): Promise<void> {
   await localDb.ready;
   await localDb.exec('DELETE FROM jewelry_costing_materials WHERE jewelry_costing_id = ?', [id]);
   await localDb.exec('DELETE FROM jewelry_costing WHERE id = ?', [id]);
+  await markDirty('jewelry', id, new Date().toISOString()); // uploads as a deletion
 }
 
 export async function getAvailablePlatedJewelry(

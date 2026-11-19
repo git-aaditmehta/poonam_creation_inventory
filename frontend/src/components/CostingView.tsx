@@ -116,6 +116,14 @@ export const CostingView: React.FC<CostingViewProps> = ({
     }
   }, [searchQuery, showToast]);
 
+  // Costing changes from another device (materials, prices, X, designs) arrived: refresh the totals.
+  // (Kundan stone prices from the inventory are read live every time this screen loads.)
+  useEffect(() => {
+    const onChange = () => loadData();
+    window.addEventListener('costing-change', onChange);
+    return () => window.removeEventListener('costing-change', onChange);
+  }, [loadData]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -429,7 +437,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
                 border: '1px solid rgba(13,148,136,0.3)',
               }}
             >
-              Private Local-Only
+              Private · owner only
             </span>
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>

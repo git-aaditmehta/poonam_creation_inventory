@@ -64,3 +64,13 @@ export function istDayEndUtc(ymd: string): string {
   d.setUTCMinutes(d.getUTCMinutes() - IST_OFFSET_MINUTES);
   return d.toISOString().slice(0, 19).replace('T', ' ');
 }
+
+/**
+ * When the cloud's free daily limits renew: 00:00 UTC = 05:30 India time. Returns "today at 5:30 AM" or
+ * "tomorrow at 5:30 AM" (India time) for messages.
+ */
+export function cloudLimitResetText(now = new Date()): string {
+  const ist = new Date(now.getTime() + IST_OFFSET_MINUTES * 60_000);
+  const minutes = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  return minutes < 5 * 60 + 30 ? 'today at 5:30 AM (India time)' : 'tomorrow at 5:30 AM (India time)';
+}

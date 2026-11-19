@@ -41,12 +41,15 @@ interface CostingMaterialsViewProps {
   onBack?: () => void;
   onMaterialsChanged?: () => void;
   onNavigateToCosting?: () => void;
+  /** Kundan stone names/prices are edited only in the Kundan Stone inventory section */
+  onOpenKundanStones?: () => void;
 }
 
 export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
   onBack,
   onMaterialsChanged,
   onNavigateToCosting,
+  onOpenKundanStones,
 }) => {
   const { showToast } = useToast();
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
@@ -108,6 +111,16 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       showToast('error', 'Error loading materials', errorText(err));
     }
   }, [selectedCategory, searchQuery, showToast]);
+
+  // Changes from another device (or a merge) arrived: show them
+  useEffect(() => {
+    const onChange = () => {
+      fetchCategories();
+      fetchMaterials();
+    };
+    window.addEventListener('costing-change', onChange);
+    return () => window.removeEventListener('costing-change', onChange);
+  }, [fetchCategories, fetchMaterials]);
 
   useEffect(() => {
     fetchCategories();
@@ -433,7 +446,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   border: '1px solid rgba(13,148,136,0.3)',
                 }}
               >
-                Private Local-Only
+                Private · owner only
               </span>
             </div>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
@@ -635,10 +648,15 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   }}
                 >
                   <Sparkles size={16} color="var(--teal-deep)" />
-                  <span>
-                    Kundan Stone materials are synchronized with your inventory <strong>Stones</strong> master list.
-                    Updating prices here propagates to jewelry designs and updates the inventory stone rate.
+                  <span style={{ flex: 1 }}>
+                    Kundan stone names and prices come from the <strong>Kundan Stone</strong> section and update here (and in every
+                    design that uses them) automatically. To change one, edit it there.
                   </span>
+                  {onOpenKundanStones && (
+                    <button type="button" className="btn btn-secondary" style={{ fontSize: 12, padding: '5px 10px', whiteSpace: 'nowrap' }} onClick={onOpenKundanStones}>
+                      Open Kundan Stone section
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -720,14 +738,16 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                             </td>
                             <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                               <div style={{ display: 'inline-flex', gap: 6 }}>
-                                <button
-                                  onClick={() => openEditMaterialModal(mat)}
-                                  className="btn-icon"
-                                  title="Edit material or cost price"
-                                  style={{ padding: 6 }}
-                                >
-                                  <Edit2 size={14} />
-                                </button>
+                                {!mat.is_inventory_stone && (
+                                  <button
+                                    onClick={() => openEditMaterialModal(mat)}
+                                    className="btn-icon"
+                                    title="Edit material or cost price"
+                                    style={{ padding: 6 }}
+                                  >
+                                    <Edit2 size={14} />
+                                  </button>
+                                )}
                                 {!mat.is_inventory_stone && (
                                   <button
                                     onClick={() => handleDeleteMaterial(mat)}

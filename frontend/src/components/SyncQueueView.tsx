@@ -15,6 +15,7 @@ import { getAllPendingOps, getPendingCount, retryPendingOp, removePendingOp, typ
 import { syncEngine, type SyncStatus } from '../lib/syncEngine';
 import { getStorageEstimate } from '../lib/imageCache';
 import { localDb } from '../lib/localDb';
+import { redownloadCosting, subscribeCostingSync, type CostingSyncState } from '../lib/costingSync';
 import { storedGridPhotoCount } from '../lib/photoOffline';
 import { useToast } from '../context/ToastContext';
 import { formatIST, parseTimestamp } from '../utils/time';
@@ -55,6 +56,10 @@ export const SyncQueueView: React.FC = () => {
     }
     setIsLoading(false);
   }, []);
+
+  // Costing changes on this phone not yet in the cloud (owner only)
+  const [costingSync, setCostingSync] = useState<CostingSyncState | null>(null);
+  useEffect(() => subscribeCostingSync(setCostingSync), []);
 
   // Grid photos stored on this phone (all of them are kept for offline use)
   const [photos, setPhotos] = useState<{ stored: number; total: number } | null>(null);
@@ -124,6 +129,7 @@ export const SyncQueueView: React.FC = () => {
     if (!confirm(`Re-download all data from the cloud?${keepNote}`)) return;
     showToast('info', 'Re-downloading data…', waiting > 0 ? `${waiting} waiting change(s) are kept and will be sent afterwards.` : 'This takes a few seconds.');
     await syncEngine.forceResync();
+    await redownloadCosting(); // Costing too (owner only); its waiting changes are kept
     const st = syncEngine.status;
     if (st.bootstrapComplete && !st.error) {
       showToast('success', 'Data re-downloaded', 'This phone now has the latest data from the cloud.');
@@ -237,6 +243,14 @@ export const SyncQueueView: React.FC = () => {
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
             {formatBytes(storage.used)} used{storage.quota > 0 ? ` / ${formatBytes(storage.quota)} available` : ''}
           </div>
+          {costingSync?.active && (costingSync.waiting > 0 || costingSync.error) && (
+            <div style={{ fontSize: 13, color: costingSync.error ? 'var(--amber-text)' : 'var(--text-secondary)', marginTop: 4 }}>
+              {costingSync.waiting > 0 && (
+                <>Costing changes waiting to upload: <strong>{costingSync.waiting}</strong>{navigator.onLine ? '' : ' — they upload when you are back online'}. </>
+              )}
+              {costingSync.error}
+            </div>
+          )}
           {photos && photos.total > 0 && (
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
               Grid photos on this phone: <strong>{Math.min(photos.stored, photos.total)}</strong> of {photos.total}
