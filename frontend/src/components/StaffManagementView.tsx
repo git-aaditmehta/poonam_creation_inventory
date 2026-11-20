@@ -13,6 +13,7 @@ import type { StaffUser } from '../types';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
 import { formatISTDate } from '../utils/time';
+import { PasswordInput } from './PasswordInput';
 
 export const StaffManagementView: React.FC = () => {
   const { showToast } = useToast();
@@ -248,13 +249,13 @@ export const StaffManagementView: React.FC = () => {
                   <label className="form-label">
                     Initial Password <span className="required">*</span>
                   </label>
-                  <input
-                    type="password"
+                  <PasswordInput
                     className="input"
                     placeholder="••••••••••••"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     required
+                    autoComplete="new-password"
                   />
                   <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                     Staff accounts cannot view cost prices or delete transactions.
@@ -297,13 +298,13 @@ export const StaffManagementView: React.FC = () => {
                   <label className="form-label">
                     New Password <span className="required">*</span>
                   </label>
-                  <input
-                    type="password"
+                  <PasswordInput
                     className="input"
                     placeholder="••••••••••••"
                     value={resetPasswordVal}
                     onChange={(e) => setResetPasswordVal(e.target.value)}
                     required
+                    autoComplete="new-password"
                   />
                 </div>
               </div>

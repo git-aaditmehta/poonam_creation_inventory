@@ -1,5 +1,5 @@
 # Cloudflare Pages project for the app (agreed 2026-11-20). Deploy: npm run build && wrangler pages deploy
-name = "poonam-creation"
+name = "poonam-creation-inventory"
 pages_build_output_dir = "./dist"
 compatibility_date = "2025-04-01"
 

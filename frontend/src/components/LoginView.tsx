@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
+import { PasswordInput } from './PasswordInput';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
@@ -160,11 +161,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 color="var(--text-muted)"
                 style={{ position: 'absolute', left: 12, top: 12 }}
               />
-              <input
+              <PasswordInput
                 id="login-password"
-                type="password"
                 className="input"
-                style={{ paddingLeft: 38 }}
+                leftPadding={38}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••••"
