@@ -277,7 +277,7 @@ export const BackupView: React.FC = () => {
               </div>
               <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
                 Jewelry photos (each stored as a full-size and a grid-size file).
-                {usage.r2.scanner_model_size_mb ? ` Also stored: the scanner model (${usage.r2.scanner_model_size_mb} MB), which phones download for Scan DINO.` : ''}
+                {usage.r2.scanner_model_size_mb ? ` Also stored: the scanner model (${usage.r2.scanner_model_size_mb} MB), which phones download for Scan.` : ''}
               </div>
             </div>
           ) : (

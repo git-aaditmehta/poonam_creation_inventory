@@ -8,6 +8,10 @@ interface StockPdfModalProps {
   categoryTitle: string;
   onClose: () => void;
   showToast?: (type: 'success' | 'error' | 'info', title: string, message?: string) => void;
+  /** Other PDFs (e.g. Costing) replace the stock wording. */
+  heading?: string;
+  subtitle?: string;
+  shareText?: string;
 }
 
 export const StockPdfModal: React.FC<StockPdfModalProps> = ({
@@ -15,6 +19,9 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
   categoryTitle,
   onClose,
   showToast,
+  heading,
+  subtitle,
+  shareText,
 }) => {
   const [isSharing, setIsSharing] = useState(false);
 
@@ -41,8 +48,8 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
       ) {
         await navigator.share({
           files: [pdfResult.file],
-          title: `Poonam Creation — ${categoryTitle} Stock`,
-          text: `Current stock statement for ${categoryTitle} (${pdfResult.totalItems} items).`,
+          title: `Poonam Creation — ${heading || `${categoryTitle} Stock`}`,
+          text: shareText || `Current stock statement for ${categoryTitle} (${pdfResult.totalItems} items).`,
         });
         showToast?.('success', 'Shared Successfully');
         return;
@@ -53,8 +60,8 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
         // Download file first so they have it
         handleDownload();
         await navigator.share({
-          title: `Poonam Creation — ${categoryTitle} Stock`,
-          text: `Current stock statement for ${categoryTitle} (${pdfResult.totalItems} items).`,
+          title: `Poonam Creation — ${heading || `${categoryTitle} Stock`}`,
+          text: shareText || `Current stock statement for ${categoryTitle} (${pdfResult.totalItems} items).`,
         });
         return;
       }
@@ -62,7 +69,9 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
       // 3. Fallback: Download file and open WhatsApp Web/App
       handleDownload();
       const whatsappText = encodeURIComponent(
-        `*Poonam Creation Stock Statement*\nCategory: ${categoryTitle}\nTotal Items: ${pdfResult.totalItems}\nGenerated on: ${formatIST(new Date())} (IST)`
+        shareText
+          ? `*Poonam Creation — ${heading || categoryTitle}*\n${shareText}\nGenerated on: ${formatIST(new Date())} (IST)`
+          : `*Poonam Creation Stock Statement*\nCategory: ${categoryTitle}\nTotal Items: ${pdfResult.totalItems}\nGenerated on: ${formatIST(new Date())} (IST)`
       );
       window.open(`https://api.whatsapp.com/send?text=${whatsappText}`, '_blank');
       showToast?.(
@@ -145,10 +154,10 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A' }}>
-                {categoryTitle} — Stock Statement
+                {heading || `${categoryTitle} — Stock Statement`}
               </h3>
               <p style={{ margin: 0, fontSize: 12, color: '#64748B', marginTop: 2 }}>
-                {pdfResult.totalItems} items listed • No price values included
+                {subtitle || `${pdfResult.totalItems} items listed • No price values included`}
               </p>
             </div>
           </div>
@@ -275,13 +284,15 @@ export const StockPdfModal: React.FC<StockPdfModalProps> = ({
             backgroundColor: '#F8FAFC',
             borderTop: '1px solid #E2E8F0',
             display: 'flex',
+            flexWrap: 'wrap',
+            gap: '4px 16px',
             alignItems: 'center',
             justifyContent: 'space-between',
             fontSize: 12,
             color: '#64748B',
           }}
         >
-          <span>File: <strong>{pdfResult.filename}</strong></span>
+          <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>File: <strong>{pdfResult.filename}</strong></span>
           <span>Tip: Tap <strong>Share PDF</strong> to send directly to WhatsApp.</span>
         </div>
       </div>

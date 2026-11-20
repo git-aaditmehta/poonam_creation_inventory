@@ -10,7 +10,7 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Cpu,
+  ScanLine,
   Camera,
   RefreshCw,
   Upload,
@@ -574,7 +574,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       attributes: null,
       embedding_text: null,
     });
-    if (!indexed) showToast('warning', 'Not learned yet', `${item.item_id} has not been learned by DINO, so search could never find it.`);
+    if (!indexed) showToast('warning', 'Not learned yet', `${item.item_id} has not been learned for scanning yet, so Scan could never find it.`);
   };
 
   const handleSaveReason = () => {
@@ -593,7 +593,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
 
   const handleClearSession = () => {
     if (!records.length) return;
-    if (!window.confirm(`Delete all ${records.length} DINO test scans on this device? Download the report first if you need it.`)) return;
+    if (!window.confirm(`Delete all ${records.length} saved scans on this device? Download the report first if you need it.`)) return;
     clearScanLog(DINO_STORAGE_KEY);
     setRecords([]);
     setCurrentRecordId(null);
@@ -736,9 +736,8 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       {/* Header */}
       <div className="sj-header">
         <div className="sj-title">
-          <Cpu size={20} />
-          <span>Scan DINO</span>
-          <span className="sj-badge">Test · on-device</span>
+          <ScanLine size={20} />
+          <span>Scan</span>
         </div>
         {isOwner && (
           <button className="btn btn-secondary sj-small-btn" onClick={() => setShowIndexPanel(!showIndexPanel)}>
@@ -753,8 +752,8 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
           <div className="sj-row" style={{ fontWeight: 600 }}>
             <Download size={16} />
             {modelProgress && modelProgress.loaded > 0
-              ? `Downloading the DINO model… ${mb(modelProgress.loaded)} / ${mb(modelProgress.total || DINO_MODEL_BYTES)} MB`
-              : 'Loading the DINO model…'}
+              ? `Downloading the scanner… ${mb(modelProgress.loaded)} / ${mb(modelProgress.total || DINO_MODEL_BYTES)} MB`
+              : 'Loading the scanner…'}
           </div>
           <div className="sd-progress"><div style={{ width: `${pct}%` }} /></div>
           <div className="sj-small sj-muted">First time only ({mb(DINO_MODEL_BYTES)} MB, best on wifi). After that it opens from this phone in about a second.</div>
@@ -803,7 +802,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
                 </div>
               )
             ) : (
-              <div className="sj-small">Scan can’t find these yet. Ask the owner to open Scan DINO once.</div>
+              <div className="sj-small">Scan can’t find these yet. Ask the owner to open Scan once.</div>
             )}
           </div>
         </div>
@@ -841,7 +840,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       {isOwner && showIndexPanel && (
         <div className="sj-card">
           <div className="sj-row-between">
-            <strong>DINO catalog</strong>
+            <strong>Scan catalog</strong>
             <button className="btn btn-secondary sj-small-btn" onClick={fetchStatus}>
               <RefreshCw size={12} /> Refresh
             </button>
@@ -1172,9 +1171,9 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       )}
 
       <style>{`
-        .sj-root { padding: 12px; max-width: 1100px; margin: 0 auto; box-sizing: border-box; }
+        .sj-root { padding: 12px; width: 100%; max-width: 1100px; margin: 0 auto; box-sizing: border-box; }
         .sj-root * { box-sizing: border-box; }
-        .sj-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .sj-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
         .sj-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700; color: var(--text-primary); min-width: 0; }
         .sj-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--teal-faint); color: var(--teal-deep); border: 1px solid var(--teal-border); white-space: nowrap; }
         .sj-small-btn { font-size: 12px !important; padding: 6px 10px !important; display: inline-flex; align-items: center; gap: 4px; }

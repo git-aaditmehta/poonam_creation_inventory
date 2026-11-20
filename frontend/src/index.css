@@ -177,6 +177,13 @@ code, kbd, pre, .mono {
   padding: 0;
 }
 
+/* Every screen fills the content area and never grows wider than it (a centred screen otherwise sizes itself to its
+   widest line, which pushed buttons off the side on phones). */
+.main-content > * {
+  width: 100%;
+  min-width: 0;
+}
+
 .view-container {
   width: 100%;
   padding: 24px 32px;
@@ -334,7 +341,10 @@ code, kbd, pre, .mono {
   .sidebar {
     width: 260px !important;
     transform: translateX(-100%);
+    z-index: 60; /* above the bottom tab bar (50): the menu's footer holds Log out */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
+  .mobile-backdrop { z-index: 55; }
   .sidebar.mobile-open { transform: translateX(0); }
   .collapse-btn { display: none; }
   .mobile-close-btn { display: flex; }
@@ -366,6 +376,40 @@ code, kbd, pre, .mono {
   padding: 0 32px;
   box-shadow: 0 1px 3px rgba(44, 62, 80, 0.04);
   box-sizing: border-box;
+}
+
+.top-header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.top-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+/* One line, never spilling out of the bar: the long title on laptops, a short one on phones. */
+.header-title {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-title-short { display: none; }
+@media (max-width: 900px) {
+  .header-title-full { display: none; }
+  .header-title-short { display: block; }
+  .top-header-left { gap: 10px; }
+  .top-header-right { gap: 8px; }
+}
+@media (max-width: 600px) {
+  .top-header .header-role { display: none; }
 }
 
 .header-menu-btn {
@@ -1136,4 +1180,32 @@ code, kbd, pre, .mono {
 
 .data-table tr:hover .costing-sticky-right {
   background: var(--bg-surface-hover) !important;
+}
+
+/* Stock Operations category buttons: one row of 4; 2 x 2 on narrow phones (360 px Androids) so "Foil" is never cut off. */
+.ops-cat-grid { grid-template-columns: repeat(4, auto); justify-content: stretch; }
+.ops-cat-grid > .btn { white-space: nowrap; }
+@media (max-width: 380px) {
+  .ops-cat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Materials & Categories: categories beside materials on laptops; on phones the category list first, and tapping a
+   category shows its materials full width with an "All categories" button to go back. */
+.mat-grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+.mat-back { display: none !important; }
+@media (max-width: 900px) {
+  .mat-grid { grid-template-columns: minmax(0, 1fr); }
+  .mat-grid .mat-detail { display: none; }
+  .mat-grid.has-selection .mat-cats { display: none; }
+  .mat-grid.has-selection .mat-detail { display: block; }
+  .mat-back { display: inline-flex !important; }
+}
+
+/* Costing spreadsheet on phones: only the Jewelry ID stays pinned (pinning Total too left almost no room and covered
+   the other columns); Total is reached by scrolling sideways like the rest. */
+@media (max-width: 700px) {
+  .costing-sticky-right,
+  .costing-sticky-right-header { position: static; box-shadow: none; }
+  .costing-sticky-left,
+  .costing-sticky-left-header { max-width: 140px; white-space: normal; overflow-wrap: anywhere; }
 }

@@ -23,7 +23,7 @@ import {
   IndianRupee,
   Boxes,
   Camera,
-  Cpu,
+  ScanLine,
 } from 'lucide-react';
 import type { User } from '../types';
 import { LLAMA_SCAN_ENABLED } from '../config/features';
@@ -45,6 +45,25 @@ export type ActiveTab =
   | 'sync-queue'
   | 'staff'
   | 'backup';
+
+/** Top-bar title per screen: [full title (laptop), short title (phone, one line)]. */
+const TAB_TITLES: Record<ActiveTab, [string, string]> = {
+  plated: ['Plated Jewelry', 'Plated'],
+  raw: ['Raw Jewelry Casting', 'Raw'],
+  stones: ['Kundan Stone', 'Kundan'],
+  foil: ['Silver & Metal Foil', 'Foil'],
+  scan: ['Scan Jewelry', 'Scan'],
+  'scan-dino': ['Scan', 'Scan'],
+  operations: ['Stock Operations', 'Stock Ops'],
+  costing: ['Private Jewelry Costing', 'Costing'],
+  'costing-materials': ['Raw Materials & Categories', 'Materials'],
+  'low-stock': ['Low Stock Center', 'Low Stock'],
+  history: ['Transaction History Audit', 'History'],
+  excel: ['Excel Import & Staging', 'Excel'],
+  'sync-queue': ['Sync Queue & Offline Ops', 'Sync Queue'],
+  staff: ['Staff Accounts', 'Staff'],
+  backup: ['System Storage & Backup', 'Backup'],
+};
 
 interface NavigationProps {
   user: User;
@@ -192,10 +211,10 @@ export const Navigation: React.FC<NavigationProps> = ({
             <button
               className={`nav-item ${activeTab === 'scan-dino' ? 'active' : ''}`}
               onClick={() => handleTabClick('scan-dino')}
-              title="Scan DINO (on-device visual search, test)"
+              title="Scan a piece to find its design"
             >
-              <Cpu size={18} />
-              <span>Scan DINO</span>
+              <ScanLine size={18} />
+              <span>Scan</span>
             </button>
             <button
               className={`nav-item ${activeTab === 'operations' ? 'active' : ''}`}
@@ -435,8 +454,8 @@ export const Navigation: React.FC<NavigationProps> = ({
           className={`mobile-nav-btn ${activeTab === 'scan-dino' ? 'active' : ''}`}
           onClick={() => setActiveTab('scan-dino')}
         >
-          <Cpu size={18} />
-          <span>DINO</span>
+          <ScanLine size={18} />
+          <span>Scan</span>
         </button>
         <button
           className={`mobile-nav-btn ${activeTab === 'operations' ? 'active' : ''}`}
@@ -483,7 +502,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
 
   return (
     <header className="top-header">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div className="top-header-left">
         <button
           onClick={toggleSidebar}
           className="header-menu-btn"
@@ -492,28 +511,13 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         >
           <Menu size={20} />
         </button>
-        <div>
-          <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
-            {activeTab === 'plated' && 'Plated Jewelry'}
-            {activeTab === 'raw' && 'Raw Jewelry Casting'}
-            {activeTab === 'stones' && 'Kundan Stone'}
-            {activeTab === 'foil' && 'Silver & Metal Foil'}
-            {activeTab === 'scan' && 'Scan Jewelry'}
-            {activeTab === 'scan-dino' && 'Scan DINO'}
-            {activeTab === 'operations' && 'Stock Operations'}
-            {activeTab === 'costing' && 'Private Jewelry Costing'}
-            {activeTab === 'costing-materials' && 'Raw Materials & Categories'}
-            {activeTab === 'low-stock' && 'Low Stock Center'}
-            {activeTab === 'history' && 'Transaction History Audit'}
-            {activeTab === 'excel' && 'Excel Import & Staging'}
-            {activeTab === 'sync-queue' && 'Sync Queue & Offline Ops'}
-            {activeTab === 'staff' && 'Staff Accounts'}
-            {activeTab === 'backup' && 'System Storage & Backup'}
-          </span>
+        <div style={{ minWidth: 0 }}>
+          <span className="header-title header-title-full">{TAB_TITLES[activeTab][0]}</span>
+          <span className="header-title header-title-short">{TAB_TITLES[activeTab][1]}</span>
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="top-header-right">
         {/* Online/Offline indicator in header */}
         {syncStatus && (
           <button
@@ -545,10 +549,11 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
             )}
           </button>
         )}
+        {/* Hidden on phones (the side menu shows who is logged in) so the screen title fits on one line */}
         {isOwner ? (
-          <span className="badge badge-gold">Owner</span>
+          <span className="badge badge-gold header-role">Owner</span>
         ) : (
-          <span className="badge badge-emerald">Staff</span>
+          <span className="badge badge-emerald header-role">Staff</span>
         )}
         {isOwner && lowStockCount > 0 && (
           <button

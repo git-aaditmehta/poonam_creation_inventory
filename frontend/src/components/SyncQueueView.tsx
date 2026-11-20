@@ -178,7 +178,7 @@ export const SyncQueueView: React.FC = () => {
     <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
       {/* Sync Status Header */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24,
+        display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16, marginBottom: 24,
         padding: 20, borderRadius: 12,
         background: 'var(--bg-card)', border: '1px solid var(--border-subtle)',
       }}>
@@ -192,7 +192,7 @@ export const SyncQueueView: React.FC = () => {
             : <WifiOff size={22} style={{ color: '#ef4444' }} />
           }
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: '1 1 140px', minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)' }}>
             {syncStatus.isOnline ? 'Online' : 'Offline'}{' '}
             {syncStatus.isSyncing && <span style={{ color: 'var(--teal-deep)', fontWeight: 400 }}>— Syncing...</span>}
@@ -205,7 +205,7 @@ export const SyncQueueView: React.FC = () => {
             {syncStatus.error && <span style={{ color: '#ef4444', marginLeft: 8 }}>• {syncStatus.error}</span>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <button
             onClick={handleForceSync}
             disabled={syncStatus.isSyncing || !syncStatus.isOnline}
@@ -237,8 +237,8 @@ export const SyncQueueView: React.FC = () => {
         padding: 16, borderRadius: 12,
         background: 'var(--bg-card)', border: '1px solid var(--border-subtle)',
       }}>
-        <HardDrive size={20} style={{ color: 'var(--text-secondary)', marginTop: 2 }} />
-        <div>
+        <HardDrive size={20} style={{ color: 'var(--text-secondary)', marginTop: 2, flexShrink: 0 }} />
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>Local Storage</div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
             {formatBytes(storage.used)} used{storage.quota > 0 ? ` / ${formatBytes(storage.quota)} available` : ''}

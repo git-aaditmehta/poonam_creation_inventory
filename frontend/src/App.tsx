@@ -429,7 +429,7 @@ const AppContent: React.FC = () => {
           />
         )}
         {activeTab === 'scan-dino' && (
-          <Suspense fallback={<div style={{ padding: 24, textAlign: 'center' }}>Loading Scan DINO…</div>}>
+          <Suspense fallback={<div style={{ padding: 24, textAlign: 'center' }}>Loading Scan…</div>}>
             <ScanDinoView
               user={currentUser}
               onQuickOperate={(cat, item) => handleQuickOperate(cat, item)}

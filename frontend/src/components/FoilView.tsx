@@ -344,7 +344,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
           {isOwner && valuation !== null && (
             <div
               style={{
@@ -391,8 +391,8 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
       </div>
 
       {/* Search Toolbar */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 400 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 400 }}>
           <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: 11 }} />
           <input
             type="text"

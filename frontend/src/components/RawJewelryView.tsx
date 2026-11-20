@@ -311,7 +311,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
           <GeneratePdfButton
             category="raw-jewelry"
             categoryTitle="Raw Jewelry"
@@ -333,8 +333,8 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
       </div>
 
       {/* Search Toolbar */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 400 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 400 }}>
           <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: 11 }} />
           <input
             type="text"

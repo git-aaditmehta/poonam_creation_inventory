@@ -14,7 +14,6 @@ import {
   ArrowLeft,
   X,
   Download,
-  Upload,
 } from 'lucide-react';
 import {
   getCostingCategories,
@@ -33,7 +32,6 @@ import {
 } from '../lib/costingDb';
 import { formatRupees, roundTo2 } from '../lib/costingEngine';
 import { exportRawMaterialsWorkbook } from '../lib/costingExcel';
-import { CostingExcelRestoreModal } from './CostingExcelRestoreModal';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
 
@@ -52,7 +50,6 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
   onOpenKundanStones,
 }) => {
   const { showToast } = useToast();
-  const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
 
   const [categories, setCategories] = useState<CostingCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<CostingCategory | null>(null);
@@ -475,14 +472,6 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
             <Download size={14} /> Materials Excel
           </button>
           <button
-            onClick={() => setIsRestoreModalOpen(true)}
-            className="btn btn-secondary"
-            title="Restore / Onboard Raw Materials from Excel"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
-          >
-            <Upload size={14} /> Restore Excel
-          </button>
-          <button
             onClick={() => {
               setCategoryNameInput('');
               setIsAddCategoryOpen(true);
@@ -496,9 +485,9 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
       </div>
 
       {/* Main Grid: Left Category Sidebar / Right Material Details */}
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
+      <div className={`mat-grid ${selectedCategory ? 'has-selection' : ''}`}>
         {/* Categories Panel */}
-        <div className="card" style={{ padding: 16, border: '1px solid var(--border-medium)' }}>
+        <div className="card mat-cats" style={{ padding: 16, border: '1px solid var(--border-medium)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--teal-deep)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Categories
@@ -515,6 +504,8 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   onClick={() => {
                     setSelectedCategory(cat);
                     setSearchQuery('');
+                    // Phone: the materials replace the category list, so start at the top of them
+                    if (window.innerWidth <= 900) window.scrollTo({ top: 0 });
                   }}
                   style={{
                     padding: '12px 14px',
@@ -583,9 +574,17 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
         </div>
 
         {/* Selected Category Materials Panel */}
-        <div className="card" style={{ padding: 20, border: '1px solid var(--border-medium)', background: 'var(--bg-surface-1)' }}>
+        <div className="card mat-detail" style={{ padding: 20, border: '1px solid var(--border-medium)', background: 'var(--bg-surface-1)' }}>
           {selectedCategory ? (
             <>
+              <button
+                type="button"
+                className="btn btn-secondary mat-back"
+                onClick={() => setSelectedCategory(null)}
+                style={{ alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 13, marginBottom: 14 }}
+              >
+                <ArrowLeft size={15} /> All categories
+              </button>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -601,8 +600,8 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <div style={{ position: 'relative', width: 220 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <div style={{ position: 'relative', flex: '1 1 180px', maxWidth: 260 }}>
                     <Search size={14} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--text-muted)' }} />
                     <input
                       type="text"
@@ -642,13 +641,14 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                     fontSize: 13,
                     marginBottom: 16,
                     display: 'flex',
+                    flexWrap: 'wrap',
                     alignItems: 'center',
                     gap: 10,
                     color: 'var(--teal-deep)',
                   }}
                 >
-                  <Sparkles size={16} color="var(--teal-deep)" />
-                  <span style={{ flex: 1 }}>
+                  <Sparkles size={16} color="var(--teal-deep)" style={{ flexShrink: 0 }} />
+                  <span style={{ flex: '1 1 200px' }}>
                     Kundan stone names and prices come from the <strong>Kundan Stone</strong> section and update here (and in every
                     design that uses them) automatically. To change one, edit it there.
                   </span>
@@ -1102,17 +1102,6 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
         </div>
       )}
 
-      {/* Excel Restore / Onboarding Modal */}
-      <CostingExcelRestoreModal
-        isOpen={isRestoreModalOpen}
-        onClose={() => setIsRestoreModalOpen(false)}
-        initialSection="raw_materials"
-        onRestoreSuccess={async () => {
-          await fetchCategories();
-          await fetchMaterials();
-          onMaterialsChanged?.();
-        }}
-      />
     </div>
   );
 };

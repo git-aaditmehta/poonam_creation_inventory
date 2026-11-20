@@ -38,7 +38,7 @@ export type LearnResult = 'learned' | 'skipped' | 'failed' | 'no_jewelry';
 
 /** What the person should be told after a photo upload (null = nothing worth saying). */
 export function learnResultMessage(result: LearnResult, itemId: string): { type: 'success' | 'info' | 'warning'; title: string; message: string } | null {
-  if (result === 'learned') return { type: 'success', title: 'Ready to scan', message: `${itemId} can now be found with Scan DINO.` };
+  if (result === 'learned') return { type: 'success', title: 'Ready to scan', message: `${itemId} can now be found with Scan.` };
   if (result === 'no_jewelry') {
     return {
       type: 'warning',
@@ -47,9 +47,9 @@ export function learnResultMessage(result: LearnResult, itemId: string): { type:
     };
   }
   if (result === 'failed') {
-    return { type: 'warning', title: 'Not ready to scan yet', message: `${itemId} is saved, but Scan could not learn it now. It will be learned the next time Scan DINO is opened.` };
+    return { type: 'warning', title: 'Not ready to scan yet', message: `${itemId} is saved, but Scan could not learn it now. It will be learned the next time Scan is opened.` };
   }
-  return { type: 'info', title: 'Scan will learn it later', message: `${itemId} is saved. It will be learned for scanning the next time Scan DINO is opened.` };
+  return { type: 'info', title: 'Scan will learn it later', message: `${itemId} is saved. It will be learned for scanning the next time Scan is opened.` };
 }
 
 const DECLINED_KEY = 'dino_model_download_declined';
@@ -73,7 +73,7 @@ async function modelAvailable(): Promise<boolean> {
   const mb = Math.round(DINO_MODEL_BYTES / (1024 * 1024));
   const ok = window.confirm(
     `Download the scanner model (${mb} MB, one time) so new photos can be recognised by Scan?\n\n` +
-      'If you skip, this photo is learned later from the saved photo when Scan DINO is opened.'
+      'If you skip, this photo is learned later from the saved photo when Scan is opened.'
   );
   if (!ok) {
     try {

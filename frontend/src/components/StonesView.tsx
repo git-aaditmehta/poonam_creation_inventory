@@ -10,7 +10,6 @@ import {
   X,
   Gem,
   IndianRupee,
-  RefreshCw,
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
@@ -350,7 +349,7 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
           {isOwner && valuation !== null && (
             <div
               style={{
@@ -382,19 +381,6 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
             showToast={showToast}
           />
 
-          <button
-            onClick={() => {
-              fetchItems(true);
-              fetchValuation(true);
-              showToast('info', 'Refreshing', 'Syncing Kundan stones with cloud...');
-            }}
-            className="btn btn-secondary"
-            title="Refresh Kundan stones from cloud"
-            disabled={isLoading}
-          >
-            <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} /> Refresh
-          </button>
-
           {isOwner && (
             <button
               onClick={() => {
@@ -410,8 +396,8 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
       </div>
 
       {/* Search Toolbar */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20 }}>
-        <div style={{ position: 'relative', flex: 1, maxWidth: 400 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 400 }}>
           <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: 12, top: 11 }} />
           <input
             type="text"
@@ -449,18 +435,8 @@ export const StonesView: React.FC<StonesViewProps> = ({ user, onQuickOperate }) 
           <Gem size={40} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
           <h3 style={{ fontSize: 16 }}>No Kundan Stones Found</h3>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-            {search ? 'No match found.' : 'Create a Kundan Stone record or refresh from cloud to get started.'}
+            {search ? 'No match found.' : isOwner ? 'Add a Kundan Stone to get started.' : 'No Kundan Stones have been added yet.'}
           </p>
-          <button
-            onClick={() => {
-              fetchItems(true);
-              fetchValuation(true);
-            }}
-            className="btn btn-secondary"
-            style={{ marginTop: 14 }}
-          >
-            <RefreshCw size={14} /> Refresh from Cloud
-          </button>
         </div>
       ) : (
         <div className="table-container">

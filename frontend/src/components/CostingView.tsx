@@ -7,7 +7,8 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
-  Upload,
+  FileText,
+  Loader2,
   AlertTriangle,
   X,
   AlertCircle,
@@ -35,7 +36,8 @@ import {
   type CostingMaterialEntry,
 } from '../lib/costingEngine';
 import { CostingMaterialsView } from './CostingMaterialsView';
-import { CostingExcelRestoreModal } from './CostingExcelRestoreModal';
+import { StockPdfModal } from './StockPdfModal';
+import type { GeneratedPdfResult } from '../utils/pdfGenerator';
 import { exportJewelryCostingWorkbook } from '../lib/costingExcel';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
@@ -55,7 +57,8 @@ export const CostingView: React.FC<CostingViewProps> = ({
   const [subTab, setSubTab] = useState<'costing' | 'materials'>('costing');
 
   // Excel Restoration Modal
-  const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
+  const [pdfResult, setPdfResult] = useState<GeneratedPdfResult | null>(null);
+  const [isMakingPdf, setIsMakingPdf] = useState(false);
 
   // Multiplier X
   const [multiplierX, setMultiplierX] = useState<number>(18.0);
@@ -400,6 +403,48 @@ export const CostingView: React.FC<CostingViewProps> = ({
     return calculateTableSummary(items, categoryIds);
   }, [costings, categories]);
 
+  // PDF of the Spreadsheet view: the same rows, columns and totals; a category a design does not use stays blank.
+  const handleGeneratePdf = async () => {
+    if (costings.length === 0) {
+      showToast('info', 'Nothing to print', 'There are no costed designs yet.');
+      return;
+    }
+    setIsMakingPdf(true);
+    try {
+      const catIds = categories.map((c) => c.id);
+      const rows = costings.map((c) => {
+        const cells: Record<string, { name: string; quantity: number; cost: number | null }[]> = {};
+        for (const m of c.calculated?.materials || []) {
+          const catId = resolveCategoryId(m.categoryId, catIds) || m.categoryId;
+          (cells[catId] ||= []).push({ name: m.materialName, quantity: m.quantity, cost: m.hasMissingPrice ? null : m.extendedCost });
+        }
+        return {
+          itemId: c.item_id,
+          weight: c.weight,
+          weightCost: c.calculated?.weightCost ?? null,
+          cells,
+          totalCost: c.calculated?.totalCost ?? null,
+          incomplete: !c.is_complete,
+        };
+      });
+      // The PDF library is only downloaded when a PDF is actually made
+      const { generateCostingPdf } = await import('../utils/costingPdf');
+      setPdfResult(
+        generateCostingPdf({
+          categories: categories.map((c) => ({ id: c.id, name: c.name })),
+          rows,
+          multiplierX,
+          totals: { weightCost: summary.totalWeightCost, categoryTotals: summary.categoryTotals, grandTotal: summary.grandTotalCost },
+          search: searchQuery,
+        }),
+      );
+    } catch (err: any) {
+      showToast('error', 'PDF could not be made', errorText(err));
+    } finally {
+      setIsMakingPdf(false);
+    }
+  };
+
   // Render SubTab Switch
   if (subTab === 'materials') {
     return (
@@ -441,7 +486,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
             </span>
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-            Desktop spreadsheet costing: (Jewelry Weight × X) + Raw Materials. Completely isolated from cloud sync.
+            Desktop spreadsheet costing: (Jewelry Weight × X) + Raw Materials.
           </p>
         </div>
 
@@ -546,8 +591,8 @@ export const CostingView: React.FC<CostingViewProps> = ({
             </button>
           </div>
 
-          {/* Excel Export & Restore Buttons */}
-          <div style={{ display: 'flex', gap: 6 }}>
+          {/* Excel and PDF of the costing */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <button
               onClick={onExportJewelryExcel || handleExportJewelryExcel}
               className="btn btn-secondary"
@@ -557,12 +602,14 @@ export const CostingView: React.FC<CostingViewProps> = ({
               <Download size={14} /> Costing Excel
             </button>
             <button
-              onClick={() => setIsRestoreModalOpen(true)}
+              onClick={handleGeneratePdf}
+              disabled={isMakingPdf}
               className="btn btn-secondary"
-              title="Restore / Onboard Jewelry Costing Data from Excel"
+              title="PDF of the Spreadsheet view"
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
             >
-              <Upload size={14} /> Restore Excel
+              {isMakingPdf ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              {isMakingPdf ? 'Generating...' : 'Generate PDF'}
             </button>
           </div>
 
@@ -588,7 +635,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
           flexWrap: 'wrap',
         }}
       >
-        <div style={{ position: 'relative', width: 300 }}>
+        <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 300 }}>
           <Search size={15} style={{ position: 'absolute', left: 12, top: 11, color: 'var(--text-muted)' }} />
           <input
             type="text"
@@ -600,7 +647,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
           />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18, fontSize: 13, color: 'var(--text-secondary)' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 18px', fontSize: 13, color: 'var(--text-secondary)' }}>
           <div>
             Total Designs: <strong style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{summary.totalJewelryCount}</strong>
           </div>
@@ -633,8 +680,8 @@ export const CostingView: React.FC<CostingViewProps> = ({
 
       {/* ── MODE 1: MINIMIZED VIEW ───────────────────────────────── */}
       {viewMode === 'minimized' && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--border-medium)' }}>
-          <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <div className="card" style={{ padding: 0, overflowX: 'auto', border: '1px solid var(--border-medium)' }}>
+          <table className="data-table" style={{ width: '100%', minWidth: 600, borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--bg-surface-2)', borderBottom: '2px solid var(--border-medium)' }}>
                 <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 700, color: 'var(--teal-deep)' }}>Jewelry ID / Design</th>
@@ -1471,13 +1518,18 @@ export const CostingView: React.FC<CostingViewProps> = ({
         </div>
       )}
 
-      {/* Excel Restoration Modal */}
-      {isRestoreModalOpen && (
-        <CostingExcelRestoreModal
-          isOpen={isRestoreModalOpen}
-          onClose={() => setIsRestoreModalOpen(false)}
-          initialSection="jewelry_costing"
-          onRestoreSuccess={loadData}
+      {pdfResult && (
+        <StockPdfModal
+          pdfResult={pdfResult}
+          categoryTitle="Jewelry Costing"
+          heading="Jewelry Costing"
+          subtitle={`${pdfResult.totalItems} design${pdfResult.totalItems === 1 ? '' : 's'} • Spreadsheet view • Private (cost prices)`}
+          shareText={`Jewelry costing: ${pdfResult.totalItems} design${pdfResult.totalItems === 1 ? '' : 's'}.`}
+          onClose={() => {
+            URL.revokeObjectURL(pdfResult.url);
+            setPdfResult(null);
+          }}
+          showToast={showToast}
         />
       )}
     </div>

@@ -270,9 +270,9 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
 
       {/* Category Pills */}
       <div
+        className="ops-cat-grid"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
           gap: 8,
           marginBottom: 24,
           background: 'var(--bg-surface-1)',
