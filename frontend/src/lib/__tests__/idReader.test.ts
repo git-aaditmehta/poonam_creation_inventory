@@ -29,8 +29,10 @@ describe('ID format rule (a wrong ID is worse than an empty field)', () => {
     expect(parseItemId('PS 12345')).toBeNull(); // too long
   });
   it('uses the given category prefixes (a new category is read too)', () => {
-    expect(parseItemId('NK 12', ['ER', 'NK'])).toBe('NK 12');
-    expect(parseItemId('NK 12')).toBeNull();
+    expect(parseItemId('ZQ 12', ['ER', 'ZQ'])).toBe('ZQ 12');
+    expect(parseItemId('ZQ 12')).toBeNull(); // not a jewelry type
+    expect(parseItemId('NK 12')).toBe('NK 12'); // new types (2026-11-21) are read by default
+    expect(parseItemId('BG 7')).toBe('BG 7');
   });
 });
 

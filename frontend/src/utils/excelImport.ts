@@ -15,7 +15,7 @@
  */
 import { itemKey } from './itemId';
 import type { CellInfo, ParsedExcelResult } from './excelParser';
-import { JEWELRY_CATEGORY_PREFIX } from './jewelryCategory';
+import { getJewelryTypes } from './jewelryCategory';
 
 export type ImportCategory = 'plated_jewelry' | 'raw_jewelry' | 'stones' | 'foil';
 export type ImportField = 'item_id' | 'quantity' | 'unit' | 'low_stock_threshold' | 'cost_price';
@@ -121,9 +121,8 @@ export function codeText(cell: CellInfo | undefined): string {
   return cell.text;
 }
 
-const PREFIXES = Object.values(JEWELRY_CATEGORY_PREFIX);
 const looksLikeCode = (s: string) => /\d/.test(s);
-const hasKnownPrefix = (s: string) => PREFIXES.some((p) => new RegExp(`^${p}(?![A-Z])`, 'i').test(s.trim()));
+const hasKnownPrefix = (s: string) => getJewelryTypes().some((t) => new RegExp(`^${t.prefix}(?![A-Z])`, 'i').test(s.trim()));
 
 // ─── Column matching (E2) ──────────────────────────────────────────────────────────────────────────────────────
 

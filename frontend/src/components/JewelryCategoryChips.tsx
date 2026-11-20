@@ -1,5 +1,5 @@
 import React from 'react';
-import { JEWELRY_CATEGORY_CHIPS, type JewelryCategory } from '../utils/jewelryCategory';
+import { useJewelryTypes, typeLabel, type JewelryCategory } from '../utils/jewelryCategory';
 
 interface Props {
   value: JewelryCategory | null;
@@ -8,10 +8,17 @@ interface Props {
   counts?: Record<string, number> | null;
 }
 
-/** Jewelry-type filter chips (All / Earring / Stud / Jhumka / Bracelet / Pendant set / Other). */
-export const JewelryCategoryChips: React.FC<Props> = ({ value, onChange, counts }) => (
+/** Jewelry-type filter chips: All, every type (Earring (ER) … Bangles (BG) and any added later), Other. */
+export const JewelryCategoryChips: React.FC<Props> = ({ value, onChange, counts }) => {
+  const types = useJewelryTypes();
+  const chips: { value: JewelryCategory | null; label: string }[] = [
+    { value: null, label: 'All' },
+    ...types.map((t) => ({ value: t.prefix, label: typeLabel(t) })),
+    { value: 'other', label: 'Other' },
+  ];
+  return (
   <div className="jc-chips" role="radiogroup" aria-label="Filter by jewelry type">
-    {JEWELRY_CATEGORY_CHIPS.map((c) => {
+    {chips.map((c) => {
       const n = counts ? counts[c.value ?? 'all'] ?? 0 : null;
       // "Other" only appears when something is in it, so no item can ever be hidden, without extra clutter
       if (c.value === 'other' && n === 0 && value !== 'other') return null;
@@ -38,4 +45,5 @@ export const JewelryCategoryChips: React.FC<Props> = ({ value, onChange, counts 
       .jc-chip.active .jc-count { background: rgba(255,255,255,.22); color: #fff; }
     `}</style>
   </div>
-);
+  );
+};

@@ -11,7 +11,7 @@
  * Memory (agreed design "read all IDs first, then close"): a batch runs inside withHeavyEngine — the scanner model
  * is unloaded first, all IDs are read, then the engine is closed — so the two heavy engines never share memory.
  */
-import { JEWELRY_CATEGORY_PREFIX } from '../../utils/jewelryCategory';
+import { getJewelryTypes } from '../../utils/jewelryCategory';
 import { findTextLine } from '../dino/catalogCropCore';
 import { workCopy } from '../dino/catalogCrop';
 import { unloadDino } from '../dino/dinoClient';
@@ -42,11 +42,11 @@ export function setIdReaderOn(on: boolean): void {
 const AS_DIGIT: Record<string, string> = { O: '0', D: '0', Q: '0', I: '1', L: '1', T: '1', Z: '2', S: '5', B: '8', G: '6' };
 
 /**
- * The first "<known prefix> <number>" in the text, e.g. "PS 376(PCJ 8)" -> "PS 376". Prefixes come from the app's
- * category list (utils/jewelryCategory.ts), so a new category is read too. Anything else -> null (left empty:
+ * The first "<known prefix> <number>" in the text, e.g. "PS 376(PCJ 8)" -> "PS 376". Prefixes are the jewelry types
+ * (utils/jewelryCategory.ts, including types the owner adds later), so a new type is read too. Anything else -> null (left empty:
  * a wrong ID is worse than an empty field).
  */
-export function parseItemId(text: string, prefixes: string[] = Object.values(JEWELRY_CATEGORY_PREFIX)): string | null {
+export function parseItemId(text: string, prefixes: string[] = getJewelryTypes().map((t) => t.prefix)): string | null {
   const t = (text || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ');
   const alt = prefixes.map((p) => p.toUpperCase().replace(/[^A-Z]/g, '')).filter(Boolean).join('|');
   if (!alt) return null;

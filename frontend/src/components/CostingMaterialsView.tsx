@@ -32,6 +32,7 @@ import {
 } from '../lib/costingDb';
 import { formatRupees, roundTo2 } from '../lib/costingEngine';
 import { exportRawMaterialsWorkbook } from '../lib/costingExcel';
+import { JewelryTypesCard } from './JewelryTypesCard';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
 
@@ -775,6 +776,9 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Jewelry types for Plated / Raw / Scan (separate from the costing categories above) */}
+      <JewelryTypesCard />
 
       {/* Modal: Add Category */}
       {isAddCategoryOpen && (

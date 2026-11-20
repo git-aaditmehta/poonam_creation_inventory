@@ -146,3 +146,20 @@ describe('summary before saving', () => {
     expect(summarize('plated_jewelry', rows, map)).toMatchObject({ rowsInFile: 3, ready: 2, problems: 1, quantityByUnit: { PC: 10, SET: 2 }, totalValue: 1100 });
   });
 });
+
+import { jewelryCategoryCaseSql, jewelryCategoryWhere, typeOfItemId, leadingLetters, DEFAULT_JEWELRY_TYPES } from '../../utils/jewelryCategory';
+describe('jewelry types (2026-11-21)', () => {
+  it('the type is the leading letters of the code', () => {
+    expect(['NK 101', 'nk-5', ' Hf12', 'HP 3', 'MP-9', 'KD 1', 'bg 44', 'NKX 1', '123'].map((c) => typeOfItemId(c)?.name ?? 'Other')).toEqual([
+      'Necklace set', 'Necklace set', 'Half Kada', 'Hathpan', 'Mathapatti', 'Kada', 'Bangles', 'Other', 'Other',
+    ]);
+    expect(leadingLetters(' er-5')).toBe('ER');
+  });
+  it('SQL parameters line up (CASE and Other)', () => {
+    const c = jewelryCategoryCaseSql(DEFAULT_JEWELRY_TYPES);
+    expect((c.sql.match(/\?/g) || []).length).toBe(c.params.length);
+    const o = jewelryCategoryWhere('other', DEFAULT_JEWELRY_TYPES);
+    expect((o.sql.match(/\?/g) || []).length).toBe(o.params.length);
+    expect(c.params.slice(0, 3)).toEqual(['ER', 'ER[^A-Z]*', 'ER']);
+  });
+});

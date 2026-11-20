@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
+import { useJewelryTypes, typeLabel } from '../utils/jewelryCategory';
 import type { User, PlatedJewelryItem, ScanCategory, DinoMatch, DinoSearchResponse, DinoStatusResponse } from '../types';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
@@ -58,14 +59,6 @@ interface ScanDinoViewProps {
   onQuickOperate?: (category: 'plated_jewelry', item: any) => void;
 }
 
-const CATEGORY_CHIPS: { value: ScanCategory | null; label: string }[] = [
-  { value: null, label: 'All' },
-  { value: 'earring', label: 'Earring (ER)' },
-  { value: 'stud', label: 'Stud (PS)' },
-  { value: 'jhumka', label: 'Jhumka (JK)' },
-  { value: 'bracelet', label: 'Bracelet (BR)' },
-  { value: 'pendant_set', label: 'Pendant set (PD)' },
-];
 
 const EMBED_BATCH = 5; // vectors per /embed request (saved often, so a crash loses little)
 /** Set while learning runs; if it is still set when the tab opens, the last run crashed (e.g. out of memory). */
@@ -131,6 +124,12 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
 
   // ── Search ──
   const [category, setCategory] = useState<ScanCategory | null>(null);
+  // Type chips: every jewelry type (the owner can add more in Materials & Categories); the filter is the type's letters
+  const jewelryTypes = useJewelryTypes();
+  const CATEGORY_CHIPS: { value: ScanCategory | null; label: string }[] = [
+    { value: null, label: 'All' },
+    ...jewelryTypes.map((t) => ({ value: t.prefix, label: typeLabel(t) })),
+  ];
   const [isSearching, setIsSearching] = useState(false);
   const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
   const [response, setResponse] = useState<DinoSearchResponse | null>(null);
@@ -938,8 +937,8 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
             )}
             {isSearching && <div className="sj-scanning">Identifying on this device…</div>}
           </div>
-          {category === 'bracelet' && !capturedPreview && (
-            <div className="sj-tip" role="note">Tip: hold the phone close so the bracelet fills the gold box.</div>
+          {(category === 'BR' || category === 'HF' || category === 'KD' || category === 'BG') && !capturedPreview && (
+            <div className="sj-tip" role="note">Tip: hold the phone close so the piece fills the gold box.</div>
           )}
 
           <div className="sj-capture-bar">

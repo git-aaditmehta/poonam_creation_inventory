@@ -22,6 +22,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
 import { paisaToRupees } from '../utils/validation';
 import { isLowStock } from '../utils/lowStock';
+import { scanCategoryFromItemId, scanKeyForPrefix, prefixFromFilter } from '../utils/jewelryCategory';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -60,20 +61,30 @@ export function dinoVerdict(scores: number[]): { kind: DinoVerdictKind; top_scor
   return { kind, top_score: r(top), gap: r(gap) };
 }
 
-// Category comes from the SKU prefix (same convention as the catalog), never from the model.
-// Kept local on purpose so this feature does not depend on the Llama pipeline's code.
-const SKU_PREFIX_CATEGORY: Record<string, string> = {
-  ER: 'earring',
-  PS: 'stud',
-  JK: 'jhumka',
-  BR: 'bracelet',
-  PD: 'pendant_set',
-};
-const FILTERABLE = new Set(Object.values(SKU_PREFIX_CATEGORY));
+// Category comes from the design code's leading letters (utils/jewelryCategory.ts), never from the model.
+const categoryFromItemId = scanCategoryFromItemId;
 
-function categoryFromItemId(itemId: string | null | undefined): string {
-  const m = (itemId || '').trim().match(/^([A-Za-z]+)/);
-  return (m && SKU_PREFIX_CATEGORY[m[1].toUpperCase()]) || 'other';
+/**
+ * Fingerprints learned before a jewelry type existed were labelled "other". The first time someone scans with that
+ * type selected, its fingerprints are re-labelled (values unchanged), then the type is marked done.
+ */
+async function ensureScanTagged(env: Env, prefix: string): Promise<void> {
+  const row = await env.DB.prepare('SELECT scan_tagged FROM jewelry_categories WHERE prefix = ?').bind(prefix).first<{ scan_tagged: number }>();
+  if (!row || row.scan_tagged) return;
+  const key = scanKeyForPrefix(prefix);
+  const { results } = await env.DB.prepare(
+    `SELECT d.item_uuid AS id FROM dino_embeddings d JOIN plated_jewelry p ON p.id = d.item_uuid
+     WHERE p.is_deleted = 0 AND (UPPER(TRIM(p.item_id)) = ? OR UPPER(TRIM(p.item_id)) GLOB ?)`
+  ).bind(prefix, `${prefix}[^A-Z]*`).all<{ id: string }>();
+  const ids = (results || []).map((r) => r.id);
+  for (let i = 0; i < ids.length; i += 20) {
+    const found = await env.VECTORIZE_DINO.getByIds(ids.slice(i, i + 20));
+    const fix = found
+      .filter((v: VectorizeVector) => v.values && (v.metadata as Record<string, unknown> | undefined)?.category !== key)
+      .map((v: VectorizeVector) => ({ id: v.id, values: Array.from(v.values as ArrayLike<number>), metadata: { ...(v.metadata || {}), category: key } }));
+    if (fix.length) await env.VECTORIZE_DINO.upsert(fix);
+  }
+  await env.DB.prepare('UPDATE jewelry_categories SET scan_tagged = 1 WHERE prefix = ?').bind(prefix).run();
 }
 
 /** Validates a client-supplied vector: exact length, finite numbers, non-zero. Returns it L2-normalised. */
@@ -306,10 +317,14 @@ dino.post('/search', authMiddleware, async (c) => {
   if (!vector) return c.json({ error: `vector must be ${DINO_DIMENSIONS} finite numbers` }, 400);
   let category: string | null = null;
   if (body?.category !== undefined && body?.category !== null && body?.category !== '') {
-    if (typeof body.category !== 'string' || !FILTERABLE.has(body.category)) {
-      return c.json({ error: 'Invalid category' }, 400);
+    const prefix = prefixFromFilter(body.category); // "NK", or an older app's "earring"
+    if (!prefix) return c.json({ error: 'Invalid category' }, 400);
+    category = scanKeyForPrefix(prefix);
+    try {
+      await ensureScanTagged(c.env, prefix);
+    } catch (e) {
+      console.warn('[DINO] Re-labelling fingerprints for', prefix, 'failed (search continues):', e);
     }
-    category = body.category;
   }
 
   let vr: any;

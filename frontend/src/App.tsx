@@ -28,6 +28,7 @@ import { LLAMA_SCAN_ENABLED } from './config/features';
 import { saveLastUser, loadLastUser, clearLastUser, hasStoredToken, getQueueOwner, setQueueOwner } from './lib/lastUser';
 import { getPendingCount } from './lib/pendingOps';
 import { applyAppUpdate, takeUpdatedFrom, versionLabel } from './lib/serviceWorker';
+import { setJewelryTypes } from './utils/jewelryCategory';
 import { syncGridPhotos, requestPersistentStorage } from './lib/photoOffline';
 import { dailyLimitMessage } from './utils/friendlyErrors';
 import { startCostingSync, stopCostingSync, syncCostingNow, costingWaitingCount, clearLocalCosting } from './lib/costingSync';
@@ -181,6 +182,24 @@ const AppContent: React.FC = () => {
     window.addEventListener('cloud-daily-limit', onLimit);
     return () => window.removeEventListener('cloud-daily-limit', onLimit);
   }, [showToast]);
+
+  // Jewelry types (chips in Plated / Raw / Scan): the phone keeps a copy; refreshed from the cloud on login,
+  // when the internet comes back, and when the app returns to the screen (a type the owner added shows up everywhere)
+  useEffect(() => {
+    if (!currentUser) return;
+    const refresh = () => {
+      if (!navigator.onLine) return;
+      api.jewelryTypes.list().then((r) => setJewelryTypes(r.types)).catch(() => undefined);
+    };
+    refresh();
+    const onVisible = () => document.visibilityState === 'visible' && refresh();
+    window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [currentUser]);
 
   // Just updated: say which version is now running
   useEffect(() => {

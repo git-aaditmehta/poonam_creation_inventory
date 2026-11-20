@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, SessionData } from '../types';
 import { authMiddleware, ownerOnly } from '../middleware/auth';
-import { isJewelryCategory, jewelryCategoryWhere } from '../utils/jewelryCategory';
+import { jewelryCategoryWhere, listJewelryTypes, prefixFromFilter } from '../utils/jewelryCategory';
 import { generateId } from '../utils/crypto';
 import {
   collectErrors, validateRequired, validateString,
@@ -79,11 +79,13 @@ function createCategoryRoutes(config: CategoryConfig) {
       params.push(`%${search}%`, ...(key ? [`%${key}%`] : []));
     }
 
-    // Jewelry type chips (Plated / Raw only): ?category=earring|stud|jhumka|bracelet|pendant_set|other
+    // Jewelry type chips (Plated / Raw only): ?category=<type letters, e.g. NK>|other (older apps: earring, stud…)
     const category = c.req.query('category');
     if (category && (config.table === 'plated_jewelry' || config.table === 'raw_jewelry')) {
-      if (!isJewelryCategory(category)) return c.json({ error: 'Invalid category' }, 400);
-      const cw = jewelryCategoryWhere(category);
+      const prefix = category === 'other' ? 'other' : prefixFromFilter(category);
+      if (!prefix) return c.json({ error: 'Invalid category' }, 400);
+      const all = (await listJewelryTypes(c.env.DB)).map((t) => t.prefix);
+      const cw = jewelryCategoryWhere(prefix, all);
       whereClause += ` AND ${cw.sql}`;
       params.push(...cw.params);
     }

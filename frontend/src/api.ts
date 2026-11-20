@@ -283,6 +283,16 @@ export const api = {
       ),
   },
 
+  /** Jewelry types (chips in Plated / Raw / Scan): everyone reads; the owner adds. */
+  jewelryTypes: {
+    list: () => request<{ types: { prefix: string; name: string }[] }>('/api/jewelry-categories'),
+    add: (name: string, prefix: string) =>
+      request<{ added: { prefix: string; name: string }; existing: { plated: number; raw: number }; types: { prefix: string; name: string }[] }>(
+        '/api/jewelry-categories',
+        { method: 'POST', body: JSON.stringify({ name, prefix }) },
+      ),
+  },
+
   // Backups & Storage
   backup: {
     getMasterData: () =>

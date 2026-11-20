@@ -208,7 +208,8 @@ export interface VisualSearchMatch {
   match_breakdown?: Record<string, { weight: number; match: number }> | null;
 }
 
-export type ScanCategory = 'earring' | 'stud' | 'jhumka' | 'bracelet' | 'pendant_set';
+/** Scan filter: a jewelry type's letters (e.g. 'NK'); older saved scans may hold 'earring', 'stud'… */
+export type ScanCategory = string;
 
 export interface JewelryAttributes {
   is_jewelry: boolean;

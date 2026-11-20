@@ -21,7 +21,7 @@ import { localDb } from '../lib/localDb';
 import { isLowStock } from '../utils/lowStock';
 import { ITEM_KEY_SQL, itemKey } from '../utils/itemId';
 import { JewelryCategoryChips } from './JewelryCategoryChips';
-import { jewelryCategoryWhere, type JewelryCategory } from '../utils/jewelryCategory';
+import { jewelryCategoryWhere, useJewelryTypes, type JewelryCategory } from '../utils/jewelryCategory';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { blockIfOffline, OFFLINE_TITLE } from '../utils/offlineGuard';
@@ -61,6 +61,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [search, setSearch] = useState('');
   // Jewelry-type chips: always start on All (not remembered)
   const [jewelryCat, setJewelryCat] = useState<JewelryCategory | null>(null);
+  const jewelryTypes = useJewelryTypes(); // a type added by the owner shows up here at once
   const [catCounts, setCatCounts] = useState<Record<string, number> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [valuation, setValuation] = useState<number | null>(null);
@@ -141,7 +142,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     } finally {
       setIsLoading(false);
     }
-  }, [page, search, jewelryCat, showToast]);
+  }, [page, search, jewelryCat, jewelryTypes, showToast]);
 
   const fetchValuation = useCallback(async (forceCloud = false) => {
     if (!isOwner) return;
