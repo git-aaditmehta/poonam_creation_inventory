@@ -73,7 +73,8 @@ export function isDailyLimitError(err: any): boolean {
 }
 
 export function dailyLimitMessage(err: any): string {
-  const what = err?.data?.kind === 'read' ? 'reading data' : 'saving changes';
+  const kind = err?.data?.kind;
+  const what = kind === 'read' ? 'reading data' : kind === 'requests' ? 'requests' : 'saving changes';
   return `The cloud's free daily limit for ${what} has been reached. It renews ${cloudLimitResetText()}.`;
 }
 

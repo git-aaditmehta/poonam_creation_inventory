@@ -1,0 +1,9 @@
+# Cloudflare Pages project for the app (agreed 2026-11-20). Deploy: npm run build && wrangler pages deploy
+name = "poonam-creation"
+pages_build_output_dir = "./dist"
+compatibility_date = "2025-04-01"
+
+# /api/* is forwarded to the server Worker over Cloudflare's internal network (functions/api/[[path]].ts)
+[[services]]
+binding = "API"
+service = "poonam-creation-backend"

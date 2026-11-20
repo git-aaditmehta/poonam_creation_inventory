@@ -162,12 +162,7 @@ async function idbGetTotalSize(): Promise<number> {
 // ── Public API ─────────────────────────────────────────────────
 
 const lru = new LRUCache(LRU_MAX_SIZE);
-// In production on Vercel, route through the same-origin Vercel Mumbai proxy (/api)
-const API_BASE_URL = (
-  typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
-    ? ''
-    : (import.meta.env.VITE_API_URL || '')
-).replace(/\/+$/, '');
+import { API_BASE_URL } from './apiBase';
 
 /** 
  * Get an image URL. Checks memory cache → IndexedDB → network fetch.

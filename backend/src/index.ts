@@ -21,14 +21,17 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:5173',
   'http://localhost:4173',
   'http://127.0.0.1:4173',
-  'https://poonam-creation-inventory.vercel.app',
+  'https://poonam-creation.pages.dev',
+  'https://poonam-creation-inventory.vercel.app', // old host: remove once Vercel is stopped
 ];
 
-// Strict CORS: allow localhost, Vercel frontend, and Vercel preview branches
+// Strict CORS: localhost, the Cloudflare Pages site (+ its preview addresses), and the old Vercel site.
+// The live app calls its own site (Pages forwards /api internally), so these only matter for cross-site calls.
 app.use('/api/*', cors({
   origin: (origin) => {
     if (!origin) return '';
     if (ALLOWED_ORIGINS.includes(origin)) return origin;
+    if (/^https:\/\/[a-z0-9-]+\.poonam-creation\.pages\.dev$/.test(origin)) return origin; // preview deploys
     if (/^https:\/\/poonam-creation-inventory(-[a-z0-9_-]+)?\.vercel\.app$/.test(origin)) {
       return origin;
     }

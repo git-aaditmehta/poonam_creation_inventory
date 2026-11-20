@@ -30,12 +30,7 @@ export type SyncStatusListener = (status: SyncStatus) => void;
 
 // ── API helpers ────────────────────────────────────────────────
 
-// In production on Vercel, route through the same-origin Vercel Mumbai proxy (/api)
-const API_BASE_URL = (
-  typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
-    ? ''
-    : (import.meta.env.VITE_API_URL || '')
-).replace(/\/+$/, '');
+import { API_BASE_URL, cloudflareLimitBody } from './apiBase';
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -71,8 +66,10 @@ async function apiRequest(endpoint: string, method: string, body?: any): Promise
     const text = await res.text();
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { parsed = { error: text }; }
+    const limit = cloudflareLimitBody(res.status, text);
+    if (limit) parsed = limit;
     const err = new Error(parsed.error || parsed.message || res.statusText);
-    (err as any).status = res.status;
+    (err as any).status = limit ? 503 : res.status;
     (err as any).data = parsed;
     throw err;
   }

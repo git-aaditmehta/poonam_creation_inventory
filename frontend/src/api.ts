@@ -39,14 +39,9 @@ class ApiError extends Error {
   }
 }
 
-// In production on Vercel, route through the same-origin Vercel Mumbai proxy (/api)
-const API_BASE_URL = (
-  typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
-    ? ''
-    : (import.meta.env.VITE_API_URL || '')
-).replace(/\/+$/, '');
+import { API_BASE_URL, cloudflareLimitBody } from './lib/apiBase';
 
-/** Absolute URL for an API path (same-origin /api on Vercel, VITE_API_URL elsewhere). */
+/** Absolute URL for an API path (this site's /api in the live app; see lib/apiBase.ts). */
 export function apiUrl(path: string): string {
   return path.startsWith('http') ? path : `${API_BASE_URL}${path}`;
 }
@@ -86,6 +81,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (!response.ok) {
+    const limit = cloudflareLimitBody(response.status, data);
+    if (limit) throw new ApiError(String(limit.error), 503, limit);
     if (response.status === 401) {
       sessionStorage.removeItem('session_token');
       localStorage.removeItem('session_token');
