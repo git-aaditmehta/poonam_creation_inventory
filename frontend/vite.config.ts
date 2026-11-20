@@ -2,6 +2,44 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { execSync } from 'node:child_process'
+
+/**
+ * App version shown to users (agreed 2026-11-21): the number of commits on main (#48, #49 …) plus the short commit id,
+ * so the owner and the client can see they are on the same version. Cloudflare Pages may check out only the latest
+ * commit; the full history is then fetched to count. If that fails the number is left out (the commit id still shows).
+ */
+function appVersion(): { number: number | null; commit: string; built: string } {
+  const git = (cmd: string) => execSync(`git ${cmd}`, { stdio: ['ignore', 'pipe', 'ignore'], timeout: 30000 }).toString().trim()
+  let number: number | null = null
+  let commit = (process.env.CF_PAGES_COMMIT_SHA || '').slice(0, 7)
+  try {
+    if (git('rev-parse --is-shallow-repository') === 'true') {
+      try {
+        git('fetch --unshallow --quiet')
+      } catch {
+        /* keep going: the commit id alone is still shown */
+      }
+    }
+    if (git('rev-parse --is-shallow-repository') !== 'true') number = Number(git('rev-list --count HEAD')) || null
+    if (!commit) commit = git('rev-parse --short=7 HEAD')
+  } catch {
+    /* not a git checkout */
+  }
+  return { number, commit: commit || 'dev', built: new Date().toISOString() }
+}
+const APP_VERSION = appVersion()
+
+/** Writes /version.json: the version of the app on the site, compared with the phone's own copy by "Check for updates". */
+function versionFile(): Plugin {
+  return {
+    name: 'poonam-version-file',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify(APP_VERSION) })
+    },
+  }
+}
 
 /**
  * Writes dist/sw.js from sw/sw-template.js with the list of every built file (so the whole app is stored
@@ -16,7 +54,7 @@ function serviceWorker(): Plugin {
       const files = Object.keys(bundle)
         .filter((f) => f !== 'sw.js' && !/ort-wasm[^/]*\.(wasm|mjs)$/.test(f) && !f.endsWith('.map') && !f.startsWith('ocr/'))
         .map((f) => '/' + f)
-      const precache = ['/', ...files, '/manifest.json', '/favicon.svg', '/icons.svg']
+      const precache = ['/', ...files.filter((f) => f !== '/version.json'), '/manifest.json', '/favicon.svg', '/icons.svg']
       const version = createHash('sha256').update(precache.join('|')).digest('hex').slice(0, 12)
       const source = readFileSync(new URL('./sw/sw-template.js', import.meta.url), 'utf8')
         .replace('__VERSION__', version)
@@ -63,7 +101,10 @@ function ocrAssets(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), ocrAssets(), serviceWorker()],
+  plugins: [react(), ocrAssets(), versionFile(), serviceWorker()],
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   server: {
     port: 5173,
     headers: {

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import type { User } from '../types';
 import { LLAMA_SCAN_ENABLED } from '../config/features';
+import { AppVersionPanel } from './AppVersionPanel';
 import type { SyncStatus } from '../lib/syncEngine';
 
 export type ActiveTab =
@@ -341,6 +342,9 @@ export const Navigation: React.FC<NavigationProps> = ({
             }} />
           </div>
         )}
+
+        {/* App version + Check for updates (staff cannot open Backup, so it is here too) */}
+        {!sidebarCollapsed && <AppVersionPanel compact />}
 
         {/* User Profile Footer */}
         <div className="sidebar-footer">

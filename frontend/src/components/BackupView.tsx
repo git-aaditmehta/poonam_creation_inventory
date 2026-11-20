@@ -14,6 +14,7 @@ import type { StorageUsageResponse, PrepareDeleteResponse } from '../types';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
 import { formatIST, todayIST } from '../utils/time';
+import { AppVersionPanel } from './AppVersionPanel';
 
 export const BackupView: React.FC = () => {
   const { showToast } = useToast();
@@ -237,6 +238,9 @@ export const BackupView: React.FC = () => {
           Cloudflare D1 & R2 storage metrics, Excel workbooks, and verified history deletion.
         </p>
       </div>
+
+      {/* App version and "Check for updates" */}
+      <AppVersionPanel />
 
       {/* Storage Metrics Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 28 }}>
