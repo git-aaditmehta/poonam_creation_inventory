@@ -1,7 +1,8 @@
 /**
  * Learn-on-upload for the DINO scan.
  *
- * Flow (agreed 2026-11-18):  original photo → DINO input prepared (imageProcessor, before compression)
+ * Flow (agreed 2026-11-18):  original photo → DINO input prepared (imageProcessor, before compression;
+ *                            v3: red ID text removed + cropped to the jewelry, see catalogCrop.ts)
  *                            → photo compressed + uploaded (unchanged) → THIS: model runs on that input
  *                            → fingerprint saved to the cloud.
  *
@@ -16,6 +17,8 @@
 import { api } from '../../api';
 import { DINO_MODEL_BYTES, DINO_MODEL_VERSION } from './config';
 import { embedPixels, isDinoModelCached, loadDino } from './dinoClient';
+import { NO_JEWELRY_ADVICE } from './catalogCrop';
+import { withHeavyEngine } from '../heavyEngine';
 
 export interface LearnJob {
   /** Item UUID (plated_jewelry.id) */
@@ -26,13 +29,23 @@ export interface LearnJob {
   photoEtag: string | null | undefined;
   /** From processJewelryImage().dinoInput (transferred to the worker, unusable afterwards) */
   dinoInput: Float32Array | null;
+  /** From processJewelryImage().dinoProblem: why dinoInput is missing */
+  dinoProblem?: 'no_jewelry' | 'failed' | null;
 }
 
-export type LearnResult = 'learned' | 'skipped' | 'failed';
+/** no_jewelry: no jewelry found in the photo; never learned from the whole photo (agreed), item waits for a clearer photo */
+export type LearnResult = 'learned' | 'skipped' | 'failed' | 'no_jewelry';
 
 /** What the person should be told after a photo upload (null = nothing worth saying). */
 export function learnResultMessage(result: LearnResult, itemId: string): { type: 'success' | 'info' | 'warning'; title: string; message: string } | null {
   if (result === 'learned') return { type: 'success', title: 'Ready to scan', message: `${itemId} can now be found with Scan DINO.` };
+  if (result === 'no_jewelry') {
+    return {
+      type: 'warning',
+      title: 'Not ready to scan',
+      message: `${itemId} is saved, but no jewelry was found in its photo, so Scan cannot learn it. ${NO_JEWELRY_ADVICE}`,
+    };
+  }
   if (result === 'failed') {
     return { type: 'warning', title: 'Not ready to scan yet', message: `${itemId} is saved, but Scan could not learn it now. It will be learned the next time Scan DINO is opened.` };
   }
@@ -73,6 +86,13 @@ async function modelAvailable(): Promise<boolean> {
 }
 
 async function learn(job: LearnJob): Promise<LearnResult> {
+  if (job.dinoProblem === 'no_jewelry') return 'no_jewelry';
+  if (!job.dinoInput || !job.photoEtag) return 'skipped';
+  // Waits while the ID reader is reading (never both engines in memory at once)
+  return withHeavyEngine(() => learnWithModel(job));
+}
+
+async function learnWithModel(job: LearnJob): Promise<LearnResult> {
   if (!job.dinoInput || !job.photoEtag) return 'skipped';
   try {
     if (!(await modelAvailable())) return 'skipped';

@@ -393,13 +393,18 @@ export interface DinoMatch {
   match_model_version: string | null;
 }
 
+export type DinoVerdictKind = 'match' | 'close_call' | 'unsure' | 'no_match';
+
 export interface DinoSearchResponse {
   success: boolean;
   model_version: string;
   category_filter: ScanCategory | null;
   matches: DinoMatch[];
+  /** How sure the server is (absent from servers older than v3: treat as a plain result list) */
+  verdict?: { kind: DinoVerdictKind; top_score: number | null; gap: number | null };
+  thresholds?: { no_match_below: number; unsure_below: number; close_call_gap: number };
   filter_warning: string | null;
-  telemetry: { vectorize_ms: number; db_ms: number; total_ms: number; matches_found: number };
+  telemetry: { vectorize_ms: number; db_ms: number; total_ms: number; matches_found: number; outdated_ignored?: number };
 }
 
 export interface DinoDescriptor {

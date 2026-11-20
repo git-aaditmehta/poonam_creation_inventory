@@ -5,6 +5,8 @@
  *   downloads all of them in the background (lib/photoOffline.ts); this worker serves them from the phone.
  * - FULL photos (…-full): kept as they are opened, at most MAX_FULL_PHOTOS (oldest removed first). Offline,
  *   a full photo that is not stored falls back to the item's grid photo.
+ * - ID reader engine (/ocr/v6/...): not stored at install; kept on the device the first time the owner turns
+ *   "Read ID from photo" on (about 7 MB), so it then works offline.
  * - Live data (/api/...) is never cached: it always comes from the server (or the phone's own database).
  * - A new deploy installs in the background and waits; the app shows "Update available" and activates it
  *   on request (SKIP_WAITING), so nobody is switched to a new version in the middle of their work.
@@ -14,6 +16,7 @@ const APP_CACHE = `app-${VERSION}`;
 const THUMB_CACHE = 'thumbs-v1'; // shared with lib/photoOffline.ts — keep the name in sync
 const FULL_CACHE = 'full-v1';
 const MAX_FULL_PHOTOS = 500;
+const OCR_CACHE = 'ocr-v6'; // "Read ID from photo" engine (/ocr/v6/...): kept once downloaded, only if switched on
 const OLD_CACHES = ['photos-v1'];
 const PRECACHE = __PRECACHE__;
 
@@ -69,6 +72,21 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+
+  // ID reader engine: only fetched when the owner switches "Read ID from photo" on; kept for offline use
+  if (url.pathname.startsWith('/ocr/v6/')) {
+    event.respondWith(
+      (async () => {
+        const cache = await caches.open(OCR_CACHE);
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        const res = await fetch(req);
+        if (res.ok) await cache.put(req, res.clone());
+        return res;
+      })()
+    );
+    return;
+  }
 
   // Photos: the stored copy first, the network otherwise (and then stored)
   if (url.pathname.startsWith('/api/images/')) {

@@ -28,11 +28,37 @@ type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 const dino = new Hono<AppEnv>();
 
 // ─── Constants (must match frontend/src/lib/dino/config.ts) ─────────
-export const DINO_MODEL_VERSION = 'dinov2s-q8-224-cls-v2';
+// v3 (2026-11-20): catalog photos are cleaned (red ID text removed) and cropped to the jewelry at a 900px working
+// size before the fingerprint is made, and scans send only the gold box. Fingerprints of earlier versions are
+// ignored by search and shown as "waiting to be learned".
+export const DINO_MODEL_VERSION = 'dinov2s-q8-224-cls-crop900-v3';
 const DINO_DIMENSIONS = 384;
 const MODEL_DIR = 'dinov2-small-v1'; // R2: models/dinov2-small-v1/model.onnx
 const TOP_K = 6;
+/** Asked from Vectorize (its maximum with metadata), so old-version fingerprints can be dropped and 6 remain. */
+const QUERY_K = 20;
 const MAX_EMBED_BATCH = 20;
+
+/**
+ * Result labels (agreed 2026-11-20). Worked out on simulated scans of the 79 sample photos with the final v3 app
+ * pipeline: non-jewelry scored at most 0.22, so "no match" below 0.45 rejects all of it while hiding only ~0.5% of
+ * correct answers (0.50 hid ~2%; owner chose 0.45). 0.45-0.70 = "please check"; a gap under 0.02 between the top two
+ * = "close call" (flagged ~16% of scans, catching 2 of 3 wrong answers). Re-tune with real scans after handover.
+ */
+export const DINO_THRESHOLDS = { no_match_below: 0.45, unsure_below: 0.7, close_call_gap: 0.02 } as const;
+export type DinoVerdictKind = 'match' | 'close_call' | 'unsure' | 'no_match';
+
+/** Scores must be best-first. One score per item (one fingerprint per item). */
+export function dinoVerdict(scores: number[]): { kind: DinoVerdictKind; top_score: number | null; gap: number | null } {
+  const top = scores.length ? scores[0] : null;
+  const gap = scores.length > 1 ? scores[0] - scores[1] : null;
+  const r = (x: number | null) => (x === null ? null : Math.round(x * 1e4) / 1e4);
+  let kind: DinoVerdictKind = 'match';
+  if (top === null || top < DINO_THRESHOLDS.no_match_below) kind = 'no_match';
+  else if (top < DINO_THRESHOLDS.unsure_below) kind = 'unsure';
+  else if (gap !== null && gap < DINO_THRESHOLDS.close_call_gap) kind = 'close_call';
+  return { kind, top_score: r(top), gap: r(gap) };
+}
 
 // Category comes from the SKU prefix (same convention as the catalog), never from the model.
 // Kept local on purpose so this feature does not depend on the Llama pipeline's code.
@@ -290,7 +316,7 @@ dino.post('/search', authMiddleware, async (c) => {
   const vStart = Date.now();
   try {
     vr = await c.env.VECTORIZE_DINO.query(vector, {
-      topK: TOP_K,
+      topK: QUERY_K,
       returnMetadata: 'all',
       ...(category ? { filter: { category } } : {}),
     });
@@ -299,7 +325,13 @@ dino.post('/search', authMiddleware, async (c) => {
     return c.json({ error: 'Vector search failed.', detail: e instanceof Error ? e.message : 'Unknown error' }, 500);
   }
   const vectorizeMs = Date.now() - vStart;
-  const raw: any[] = vr?.matches || [];
+  const found: any[] = vr?.matches || [];
+  // Only fingerprints made the current way are comparable with this scan; older ones wait to be re-learned
+  const raw: any[] = found
+    .filter((m) => m.metadata?.model_version === DINO_MODEL_VERSION)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, TOP_K);
+  const outdated = found.length - found.filter((m) => m.metadata?.model_version === DINO_MODEL_VERSION).length;
 
   let rows: any[] = [];
   let dbMs = 0;
@@ -346,11 +378,13 @@ dino.post('/search', authMiddleware, async (c) => {
     model_version: DINO_MODEL_VERSION,
     category_filter: category,
     matches,
+    verdict: dinoVerdict(matches.map((m) => m.score as number)),
+    thresholds: DINO_THRESHOLDS,
     filter_warning:
       category && raw.length === 0
         ? 'No items matched this category. Nothing in this category is learned yet, or the category filter index is missing.'
         : null,
-    telemetry: { vectorize_ms: vectorizeMs, db_ms: dbMs, total_ms: totalMs, matches_found: raw.length },
+    telemetry: { vectorize_ms: vectorizeMs, db_ms: dbMs, total_ms: totalMs, matches_found: raw.length, outdated_ignored: outdated },
   });
 });
 

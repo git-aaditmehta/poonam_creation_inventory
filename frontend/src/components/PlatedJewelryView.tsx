@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -31,6 +31,7 @@ import { GeneratePdfButton } from './GeneratePdfButton';
 import { emitSyncStatus } from './SyncStatusBar';
 import { parseFriendlyError, errorText } from '../utils/friendlyErrors';
 import { cacheImageBlob } from '../lib/imageCache';
+import { closeIdReader, isIdReaderOn, OCR_DOWNLOAD_MB, prepareIdReader, readIds, setIdReaderOn, type ReadBatchControl } from '../lib/ocr/idReader';
 
 interface QueuedImage {
   id: string;
@@ -39,6 +40,9 @@ interface QueuedImage {
   previewUrl: string;
   status: 'pending' | 'saved' | 'error';
   savedItemId?: string;
+  /** "Read ID from photo": waiting = being read; otherwise the result (ocrId set when read) */
+  ocr?: 'waiting' | 'read' | 'no_text' | 'unreadable' | 'error';
+  ocrId?: string;
 }
 
 interface PlatedJewelryViewProps {
@@ -79,6 +83,15 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   // Batch image queue for creation
   const [imageQueue, setImageQueue] = useState<QueuedImage[]>([]);
   const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
+
+  // "Read ID from photo" (off by default; agreed design: read all queued photos first, then close the engine)
+  const [idReaderOn, setIdReaderOnState] = useState(isIdReaderOn);
+  const [idReaderStatus, setIdReaderStatus] = useState<string | null>(null);
+  const idReadControlRef = useRef<ReadBatchControl | null>(null);
+  /** The ID last filled in from a photo (replaced when moving on only if the field still holds exactly that) */
+  const autoFilledIdRef = useRef<string | null>(null);
+  /** The person typed in the ID field for the current photo: never overwrite it */
+  const userEditedIdRef = useRef(false);
 
   // Standalone image upload modal (for existing items)
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -160,6 +173,130 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     return () => window.removeEventListener('localdb-change', handler);
   }, [fetchItems, fetchValuation]);
 
+  const READY_KEY = 'read_id_engine_ready';
+  const engineReady = () => {
+    try {
+      return localStorage.getItem(READY_KEY) === '1';
+    } catch {
+      return false;
+    }
+  };
+
+  /** Reads the IDs of these queued photos in one batch (then the engine closes). */
+  const startReadingIds = (items: QueuedImage[]) => {
+    const todo = items.filter((q) => q.status !== 'saved' && !q.ocr);
+    if (!todo.length) return;
+    const keys = new Set(todo.map((q) => q.id));
+    setImageQueue((prev) => prev.map((q) => (keys.has(q.id) ? { ...q, ocr: 'waiting' } : q)));
+    const control: ReadBatchControl = { cancelled: false };
+    idReadControlRef.current = control;
+    let read = 0;
+    readIds(
+      todo.map((q) => ({ key: q.id, file: q.file })),
+      (key, r) => {
+        if (r.id) read++;
+        setImageQueue((prev) =>
+          prev.map((q) => (q.id === key ? { ...q, ocr: r.id !== null ? 'read' : r.reason, ocrId: r.id ?? undefined } : q))
+        );
+      },
+      (done, total, phase) => {
+        if (control.cancelled) return;
+        setIdReaderStatus(
+          phase === 'starting'
+            ? `Starting the ID reader${engineReady() ? '' : ` (first time: downloading about ${OCR_DOWNLOAD_MB} MB)`}…`
+            : `Reading IDs ${done} of ${total}…`
+        );
+      },
+      control
+    )
+      .then(() => {
+        if (control.cancelled) return;
+        try {
+          localStorage.setItem(READY_KEY, '1');
+        } catch {
+          /* ignore */
+        }
+        const missed = todo.length - read;
+        setIdReaderStatus(
+          `IDs read from ${read} of ${todo.length} photo(s)` +
+            (missed ? `; ${missed} couldn't be read, type them in.` : '.')
+        );
+      })
+      .catch((err) => {
+        if (control.cancelled) return;
+        setIdReaderStatus(null);
+        setImageQueue((prev) => prev.map((q) => (keys.has(q.id) && q.ocr === 'waiting' ? { ...q, ocr: undefined } : q)));
+        showToast(
+          'error',
+          "Couldn't start the ID reader",
+          !navigator.onLine && !engineReady()
+            ? `It needs internet once to download (about ${OCR_DOWNLOAD_MB} MB). Type the IDs in for now.`
+            : `${errorText(err)} Type the IDs in for now.`
+        );
+      });
+  };
+
+  const stopReadingIds = () => {
+    if (idReadControlRef.current) idReadControlRef.current.cancelled = true;
+    idReadControlRef.current = null;
+    closeIdReader(); // frees the engine's memory now
+    setImageQueue((prev) => prev.map((q) => (q.ocr === 'waiting' ? { ...q, ocr: undefined } : q)));
+  };
+
+  const handleToggleIdReader = (on: boolean) => {
+    setIdReaderOn(on);
+    setIdReaderOnState(on);
+    if (!on) {
+      stopReadingIds();
+      setIdReaderStatus('ID reader off. Its memory has been freed.');
+      return;
+    }
+    const unread = imageQueue.filter((q) => q.status !== 'saved' && !q.ocr);
+    if (unread.length) {
+      startReadingIds(unread);
+      return;
+    }
+    setIdReaderStatus(`Starting the ID reader${engineReady() ? '' : ` (first time: downloading about ${OCR_DOWNLOAD_MB} MB)`}…`);
+    prepareIdReader()
+      .then(() => {
+        try {
+          localStorage.setItem(READY_KEY, '1');
+        } catch {
+          /* ignore */
+        }
+        setIdReaderStatus('ID reader ready: IDs are filled in from the photos you add.');
+      })
+      .catch((err) => {
+        setIdReaderOn(false);
+        setIdReaderOnState(false);
+        setIdReaderStatus(null);
+        showToast(
+          'error',
+          "Couldn't start the ID reader",
+          !navigator.onLine ? `It needs internet once to download (about ${OCR_DOWNLOAD_MB} MB).` : errorText(err)
+        );
+      });
+  };
+
+  // Pre-fill the Design Code of the photo being processed (never over what the person typed)
+  useEffect(() => {
+    userEditedIdRef.current = false;
+  }, [currentQueueIndex]);
+  useEffect(() => {
+    const item = imageQueue[currentQueueIndex];
+    if (!item || item.status === 'saved' || !item.ocrId || userEditedIdRef.current) return;
+    const id = item.ocrId;
+    setFormItemId((cur) => {
+      if (cur === '' || cur === autoFilledIdRef.current) {
+        autoFilledIdRef.current = id;
+        return id;
+      }
+      return cur;
+    });
+  }, [imageQueue, currentQueueIndex]);
+  // Leaving the screen stops reading and frees the engine
+  useEffect(() => () => stopReadingIds(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleFilesSelected = (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     const fileArray = Array.from(files).filter((f) => f.type.startsWith('image/'));
@@ -184,6 +321,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     if (imageQueue.length === 0) {
       setCurrentQueueIndex(0);
     }
+    if (idReaderOn) startReadingIds(newItems);
   };
 
   const handleRemoveFromQueue = (index: number) => {
@@ -225,6 +363,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   };
 
   const resetCreateModal = () => {
+    stopReadingIds();
+    setIdReaderStatus(null);
+    autoFilledIdRef.current = null;
     imageQueue.forEach((item) => URL.revokeObjectURL(item.previewUrl));
     setImageQueue([]);
     setCurrentQueueIndex(0);
@@ -285,7 +426,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
     // Instant local image processing (<15ms)
     let localThumbUrl = '';
-    let processedImage: { fullBlob: Blob; thumbBlob: Blob; aiBlob: Blob | null; dinoInput: Float32Array | null } | null = null;
+    let processedImage: { fullBlob: Blob; thumbBlob: Blob; aiBlob: Blob | null; dinoInput: Float32Array | null; dinoProblem: 'no_jewelry' | 'failed' | null } | null = null;
     if (currentQueued) {
       try {
         processedImage = await processJewelryImage(currentQueued.file);
@@ -410,6 +551,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
               itemId: trimmedId,
               photoEtag: uploadRes.photo_etag,
               dinoInput: processedImage.dinoInput,
+              dinoProblem: processedImage.dinoProblem,
             }).then((r) => {
               const m = learnResultMessage(r, trimmedId);
               if (m) showToast(m.type, m.title, m.message);
@@ -552,7 +694,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
     if (!file) return;
     try {
       setSelectedFile(file);
-      const processed = await processJewelryImage(file);
+      const processed = await processJewelryImage(file, { scan: false }); // preview only
       setPreviewThumb(processed.thumbDataUrl);
     } catch (err: any) {
       showToast('error', 'Image Processing Failed', errorText(err));
@@ -584,6 +726,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
         itemId: learnedItemId,
         photoEtag: uploadRes.photo_etag,
         dinoInput: processed.dinoInput,
+        dinoProblem: processed.dinoProblem,
       }).then((r) => {
         const m = learnResultMessage(r, learnedItemId);
         if (m) showToast(m.type, m.title, m.message);
@@ -1481,18 +1624,58 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
                 {/* Fields */}
                 <div className="form-group">
-                  <label className="form-label" htmlFor="create-plated-id">
-                    Design Code / Item ID <span className="required">*</span>
-                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                    <label className="form-label" htmlFor="create-plated-id" style={{ marginBottom: 0 }}>
+                      Design Code / Item ID <span className="required">*</span>
+                    </label>
+                    <label
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}
+                      title={`Fills the Design Code from the red ID printed on the photo. Downloads about ${OCR_DOWNLOAD_MB} MB once.`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={idReaderOn}
+                        onChange={(e) => handleToggleIdReader(e.target.checked)}
+                        aria-label="Read ID from photo"
+                      />
+                      Read ID from photo
+                    </label>
+                  </div>
                   <input
                     id="create-plated-id"
                     type="text"
                     className="input mono"
                     placeholder="e.g. PJ-RING-501"
                     value={formItemId}
-                    onChange={(e) => setFormItemId(e.target.value)}
+                    onChange={(e) => {
+                      userEditedIdRef.current = true;
+                      setFormItemId(e.target.value);
+                    }}
                     required
+                    style={{ marginTop: 6 }}
                   />
+                  {(() => {
+                    const cur = imageQueue[currentQueueIndex];
+                    if (!idReaderOn || !cur || cur.status === 'saved') return null;
+                    let note: string | null = null;
+                    if (cur.ocr === 'waiting') note = 'Reading the ID from this photo…';
+                    else if (cur.ocrId && formItemId === cur.ocrId) note = 'Read from photo. Change it if it is wrong.';
+                    else if ((cur.ocr === 'no_text' || cur.ocr === 'unreadable' || cur.ocr === 'error') && !formItemId)
+                      note =
+                        cur.ocr === 'no_text'
+                          ? "No red ID found on this photo. Type it in."
+                          : "Couldn't read the ID from this photo. Type it in.";
+                    return note ? (
+                      <div className="sj-small" role="status" style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                        {note}
+                      </div>
+                    ) : null;
+                  })()}
+                  {idReaderStatus && (
+                    <div role="status" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                      {idReaderStatus}
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -1736,7 +1919,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                     if (file && file.type.startsWith('image/')) {
                       try {
                         setSelectedFile(file);
-                        const processed = await processJewelryImage(file);
+                        const processed = await processJewelryImage(file, { scan: false }); // preview only
                         setPreviewThumb(processed.thumbDataUrl);
                       } catch (err: any) {
                         showToast('error', 'Image Processing Failed', errorText(err));

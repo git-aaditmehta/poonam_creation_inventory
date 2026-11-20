@@ -69,6 +69,20 @@ function call<T>(msg: Record<string, unknown>, transfer: Transferable[] = []): P
   });
 }
 
+/**
+ * Frees the scanner model's memory (the model file stays saved on the device; loading again takes ~1-2 s).
+ * Used before the ID reader starts, so the two heavy engines are never loaded together (lib/heavyEngine.ts).
+ */
+export function unloadDino(): void {
+  if (!worker) return;
+  worker.terminate();
+  worker = null;
+  pending.forEach((p) => p.reject(new Error('Scanner model was unloaded')));
+  pending.clear();
+  loadPromise = null;
+  loadInfo = null;
+}
+
 export function getDinoLoadInfo(): DinoLoadInfo | null {
   return loadInfo;
 }

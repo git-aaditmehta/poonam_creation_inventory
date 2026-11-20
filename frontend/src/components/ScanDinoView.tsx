@@ -49,8 +49,9 @@ import {
   type ScanOutcome,
 } from '../lib/scanTestLog';
 import { generateScanTestReport } from '../utils/scanReportPdf';
-import { DINO_MODEL_BYTES, DINO_MODEL_VERSION } from '../lib/dino/config';
-import { embedImage, loadCatalogBitmap, loadDino, type DinoLoadInfo } from '../lib/dino/dinoClient';
+import { DINO_MODEL_BYTES, DINO_MODEL_VERSION, DINO_SCAN_BOX_INSET } from '../lib/dino/config';
+import { embedImage, embedPixels, loadCatalogBitmap, loadDino, type DinoLoadInfo } from '../lib/dino/dinoClient';
+import { prepareCatalogInput, NO_JEWELRY_ADVICE } from '../lib/dino/catalogCrop';
 
 interface ScanDinoViewProps {
   user: User;
@@ -158,6 +159,10 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
   const [isLearning, setIsLearning] = useState(false);
   const [learnProgress, setLearnProgress] = useState<{ done: number; total: number } | null>(null);
   const [learnErrors, setLearnErrors] = useState<string[]>([]);
+  /** Item IDs whose stored photo has no jewelry the scanner can find (this run); they stay waiting */
+  const [clearerPhotoIds, setClearerPhotoIds] = useState<string[]>([]);
+  /** "No match" hides the list; the owner can still look at the closest pieces (and mark the test report) */
+  const [showAnyway, setShowAnyway] = useState(false);
   const stopLearnRef = useRef(false);
   const autoLearnTriedRef = useRef(false);
   const [crashedLastTime] = useState(() => Boolean(readLearningFlag()));
@@ -329,11 +334,17 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
   };
 
   // ═══ Search ═══
-  /** Camera: the square the viewfinder shows. Gallery: the whole photo (padded to a square on embedding). */
+  /**
+   * Camera: only the inside of the gold box (agreed #3; 77% -> 91% correct first in the study). The viewfinder
+   * shows the centre square of the video (object-fit: cover) and the box is that square minus DINO_SCAN_BOX_INSET on
+   * every side. Gallery: the whole photo (padded to a square on embedding), unchanged.
+   */
   const cropRect = (srcW: number, srcH: number, square: boolean) => {
     if (!square) return { sx: 0, sy: 0, sw: srcW, sh: srcH };
     const side = Math.min(srcW, srcH);
-    return { sx: (srcW - side) / 2, sy: (srcH - side) / 2, sw: side, sh: side };
+    const inset = Math.floor(side * DINO_SCAN_BOX_INSET); // whole pixels: the box is read 1:1 (preprocess.ts)
+    const box = side - 2 * inset;
+    return { sx: Math.floor((srcW - side) / 2) + inset, sy: Math.floor((srcH - side) / 2) + inset, sw: box, sh: box };
   };
 
   const performSearch = async (source: HTMLVideoElement | HTMLImageElement, srcW: number, srcH: number, from: 'camera' | 'gallery') => {
@@ -361,6 +372,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     setIsSearching(true);
     setSearchError(null);
     setResponse(null);
+    setShowAnyway(false);
     setPickerMode(null);
     setReasonDraft('');
     queryVectorRef.current = null;
@@ -593,6 +605,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     setIsLearning(true);
     stopLearnRef.current = false;
     setLearnErrors([]);
+    setClearerPhotoIds([]);
     writeLearningFlag(true);
     // The live camera holds a lot of memory on phones; free it while photos are being learned
     const cameraWasOn = cameraActive;
@@ -608,6 +621,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       let batch: { id: string; vector: number[] }[] = [];
       let done = 0;
       let failed = 0;
+      const noJewelry: string[] = [];
       const flush = async () => {
         if (!batch.length) return;
         const res = await api.visualSearchDino.embed(DINO_MODEL_VERSION, batch);
@@ -618,11 +632,20 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         if (stopLearnRef.current) break;
         try {
           const bmp = await loadCatalogBitmap(api.images.getUrl(it.image_key, it.updated_at));
+          let prepared: ReturnType<typeof prepareCatalogInput>;
           try {
-            const emb = await embedImage(bmp, { sx: 0, sy: 0, sw: bmp.width, sh: bmp.height });
-            batch.push({ id: it.id, vector: emb.vector });
+            // v3: same clean-up + crop as at upload (red ID text removed, cropped to the jewelry at 900px)
+            prepared = prepareCatalogInput(bmp, bmp.width, bmp.height);
           } finally {
             bmp.close();
+          }
+          if (prepared.ok) {
+            const emb = await embedPixels(prepared.pixels);
+            batch.push({ id: it.id, vector: emb.vector });
+          } else {
+            // Never learned from the whole photo (agreed): stays waiting, listed with what to do
+            noJewelry.push(it.item_id);
+            setClearerPhotoIds([...noJewelry]);
           }
           if (batch.length >= EMBED_BATCH) await flush();
         } catch (err: any) {
@@ -638,9 +661,17 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         await new Promise((r) => setTimeout(r, 30)); // let the browser breathe / free memory between photos
       }
       await flush();
+      if (noJewelry.length) {
+        showToast(
+          'warning',
+          `${noJewelry.length} photo(s) not learned`,
+          `No jewelry was found in the photo of ${noJewelry.slice(0, 5).join(', ')}${noJewelry.length > 5 ? ` and ${noJewelry.length - 5} more` : ''}. ${NO_JEWELRY_ADVICE}`
+        );
+      }
+      const learned = done - failed - noJewelry.length;
       if (stopLearnRef.current) showToast('info', 'Learning paused', `${done} of ${items.length} processed.`);
-      else if (failed) showToast('warning', 'Learning finished with errors', `${failed} photo(s) failed; they stay waiting.`);
-      else showToast('success', 'Learning complete', `${items.length} photo(s) learned.`);
+      else if (failed) showToast('warning', 'Learning finished with errors', `${learned} learned, ${failed} failed; failed photos stay waiting.`);
+      else if (!noJewelry.length) showToast('success', 'Learning complete', `${items.length} photo(s) learned.`);
     } catch (err: any) {
       showToast('error', 'Learning failed', err?.data?.error || err?.message || 'Unknown error');
     } finally {
@@ -673,6 +704,10 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
 
   // ═══ Render helpers ═══
   const matches = response?.matches || [];
+  // Server label (#1). Absent from servers older than v3: shown as a plain list, as before.
+  const verdict = response?.verdict;
+  const verdictKind = verdict?.kind;
+  const fmtScore = (x: number | null | undefined) => (typeof x === 'number' ? x.toFixed(2) : '-');
   const ready = modelState === 'ready';
   const outcomeBanner = (() => {
     if (!currentRecord) return null;
@@ -826,6 +861,15 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
                   {learnErrors.map((e, i) => <li key={i}>{e}</li>)}
                 </ul>
               )}
+              {clearerPhotoIds.length > 0 && (
+                <div className="sj-alert sj-alert-amber" role="status">
+                  <AlertTriangle size={16} />
+                  <div>
+                    <strong>{clearerPhotoIds.length} photo(s) cannot be learned:</strong> no jewelry was found in the photo of{' '}
+                    {clearerPhotoIds.join(', ')}. {NO_JEWELRY_ADVICE} Until then Scan cannot find these items.
+                  </div>
+                </div>
+              )}
               <div className="sj-btn-row">
                 {isLearning ? (
                   <button className="btn btn-secondary" onClick={() => { stopLearnRef.current = true; }}>
@@ -895,6 +939,9 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
             )}
             {isSearching && <div className="sj-scanning">Identifying on this device…</div>}
           </div>
+          {category === 'bracelet' && !capturedPreview && (
+            <div className="sj-tip" role="note">Tip: hold the phone close so the bracelet fills the gold box.</div>
+          )}
 
           <div className="sj-capture-bar">
             {!capturedPreview ? (
@@ -949,16 +996,59 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
                 </div>
               )}
 
-              {matches.length === 0 ? (
-                <div className="sj-card sj-center">
+              {matches.length === 0 || (verdictKind === 'no_match' && !showAnyway) ? (
+                <div className="sj-card sj-center" role="status">
                   <Package size={32} className="sj-muted" />
-                  <div>No matches returned.</div>
-                  <button className="btn btn-secondary sj-wide-btn" style={{ marginTop: 10 }} onClick={() => setPickerMode('not_in_top6')}>
+                  <div><strong>No matching piece in the catalog</strong></div>
+                  <div className="sj-small sj-muted" style={{ marginTop: 4 }}>
+                    {matches.length === 0
+                      ? 'Nothing learned for scanning looks like this.'
+                      : `The closest piece scored ${fmtScore(verdict?.top_score)}, too low to be the same piece.`}{' '}
+                    Fill the gold box with one piece and try again, or choose its category. If it is a new piece, it may not be in the
+                    catalog yet.
+                  </div>
+                  {matches.length > 0 && (
+                    <button className="btn btn-secondary sj-wide-btn" style={{ marginTop: 10 }} onClick={() => setShowAnyway(true)}>
+                      Show closest pieces anyway
+                    </button>
+                  )}
+                  <button className="btn btn-secondary sj-wide-btn" style={{ marginTop: 8 }} onClick={() => setPickerMode('not_in_top6')}>
                     Mark the correct item…
                   </button>
                 </div>
               ) : (
                 <>
+                  {verdictKind === 'match' && (
+                    <div className="sj-verdict-ok" role="status">
+                      <Check size={15} /> Good match
+                    </div>
+                  )}
+                  {verdictKind === 'close_call' && (
+                    <div className="sj-alert sj-alert-amber" role="status">
+                      <AlertTriangle size={16} />
+                      <div>
+                        <strong>Close call: check the top 3.</strong> The top pieces score almost the same ({fmtScore(verdict?.gap)} apart), so
+                        compare them before choosing.
+                      </div>
+                    </div>
+                  )}
+                  {verdictKind === 'unsure' && (
+                    <div className="sj-alert sj-alert-amber" role="status">
+                      <AlertTriangle size={16} />
+                      <div>
+                        <strong>Not sure, please check.</strong> The best score is {fmtScore(verdict?.top_score)}; these are only possible
+                        matches.
+                      </div>
+                    </div>
+                  )}
+                  {verdictKind === 'no_match' && showAnyway && (
+                    <div className="sj-alert sj-alert-red" role="status">
+                      <AlertTriangle size={16} />
+                      <div>
+                        <strong>No good match.</strong> These are only the closest pieces; the right one may not be in the catalog.
+                      </div>
+                    </div>
+                  )}
                   <div className="sj-small sj-muted" style={{ margin: '4px 0 8px' }}>Tap “This one” on the correct item:</div>
                   <div className="sj-match-list">
                     {matches.map((m, idx) => {
@@ -966,7 +1056,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
                       const thumb = m.thumb_key ? api.images.getUrl(m.thumb_key, m.updated_at) : full;
                       const selected = currentRecord?.outcome === 'found' && currentRecord.selection?.id === m.id;
                       return (
-                        <div key={m.id} className={`sj-match ${selected ? 'selected' : ''}`}>
+                        <div key={m.id} className={`sj-match ${selected ? 'selected' : ''} ${verdictKind === 'close_call' && idx < 3 ? 'top3' : ''}`}>
                           <div className="sj-rank">#{idx + 1}</div>
                           <button className="sj-thumb" onClick={() => full && setLightboxUrl(full)} aria-label={`View ${m.item_id}`}>
                             {thumb ? <img src={thumb} alt={m.item_id} /> : <Layers size={22} />}
@@ -1096,6 +1186,9 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         .sj-row { display: flex; align-items: center; gap: 8px; }
         .sj-row-between { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
         .sj-alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); font-size: 13px; margin-bottom: 10px; }
+        .sj-verdict-ok { display: flex; align-items: center; gap: 6px; color: var(--emerald-text); font-size: 13px; font-weight: 600; margin: 6px 0 2px; }
+        .sj-match.top3 { outline: 2px solid rgba(212,175,55,.85); outline-offset: -2px; }
+        .sj-tip { margin: 8px auto 0; max-width: 520px; font-size: 13px; color: var(--text-secondary); background: var(--bg-surface-1); border: 1px dashed rgba(212,175,55,.7); border-radius: var(--radius-md); padding: 8px 10px; }
         .sj-alert-red { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.25); color: #B91C1C; }
         .sj-alert-amber { background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.3); color: #92400E; }
         .sj-card { background: var(--bg-surface-1); border: 1px solid var(--border-medium); border-radius: var(--radius-lg); padding: 12px; margin-bottom: 10px; }
@@ -1115,7 +1208,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         @media (min-width: 900px) { .sj-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; } }
         .sj-viewfinder { position: relative; width: 100%; max-width: 520px; margin: 0 auto; aspect-ratio: 1 / 1; background: #0F172A; border-radius: var(--radius-xl); overflow: hidden; }
         .sj-fill { width: 100%; height: 100%; display: block; }
-        .sj-reticle { position: absolute; inset: 12%; border: 2px dashed rgba(212,175,55,.7); border-radius: var(--radius-md); box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }
+        /* inset MUST equal DINO_SCAN_BOX_INSET (only the inside of this box is sent) */ .sj-reticle { position: absolute; inset: 12%; border: 2px dashed rgba(212,175,55,.7); border-radius: var(--radius-md); box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }
         .sj-cam-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; }
         .sj-round-btn { width: 40px; height: 40px; border-radius: 50%; border: none; background: rgba(0,0,0,.6); color: #fff; display: flex; align-items: center; justify-content: center; }
         .sj-round-btn.on { background: #D4AF37; color: #000; }

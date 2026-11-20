@@ -21,15 +21,24 @@ export interface ProcessedImages {
    * (~0.6 MB) and used once, right after the upload succeeds. Null if it could not be prepared (upload unaffected).
    */
   dinoInput: Float32Array | null;
+  /**
+   * Why dinoInput is null: 'no_jewelry' = no jewelry found in the photo (never learned from the whole photo; the
+   * item waits with a clear message), 'failed' = browser problem (learned later from the stored photo).
+   * null when the input is ready or was not requested.
+   */
+  dinoProblem: 'no_jewelry' | 'failed' | null;
 }
 
 import { LLAMA_SCAN_ENABLED } from '../config/features';
-import { preprocessToTensor } from '../lib/dino/preprocess';
+import { prepareCatalogInput } from '../lib/dino/catalogCrop';
 
 const AI_COPY_MAX_PX = 1120;
 const AI_COPY_QUALITY = 0.88;
 
-export async function processJewelryImage(file: File): Promise<ProcessedImages> {
+/**
+ * @param options.scan  false for a preview only (skips the scanner clean-up + crop, ~0.1 s on a phone)
+ */
+export async function processJewelryImage(file: File, options: { scan?: boolean } = {}): Promise<ProcessedImages> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Failed to read image file'));
@@ -40,11 +49,18 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
         try {
           // 1. Scanner input from the original, full-resolution photo — before any compression.
           //    Never allowed to break the upload: on any problem the photo is simply learned later.
+          //    v3: red ID text removed + cropped to the jewelry at 900px (lib/dino/catalogCrop.ts)
           let dinoInput: Float32Array | null = null;
-          try {
-            dinoInput = preprocessToTensor(img, { sx: 0, sy: 0, sw: img.naturalWidth || img.width, sh: img.naturalHeight || img.height });
-          } catch (dinoErr) {
-            console.warn('[imageProcessor] DINO input preparation failed (photo will be learned later):', dinoErr);
+          let dinoProblem: ProcessedImages['dinoProblem'] = null;
+          if (options.scan !== false) {
+            try {
+              const r = prepareCatalogInput(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
+              if (r.ok) dinoInput = r.pixels;
+              else dinoProblem = 'no_jewelry';
+            } catch (dinoErr) {
+              dinoProblem = 'failed';
+              console.warn('[imageProcessor] DINO input preparation failed (photo will be learned later):', dinoErr);
+            }
           }
 
           // 2. Compression pipeline (unchanged)
@@ -76,6 +92,7 @@ export async function processJewelryImage(file: File): Promise<ProcessedImages> 
                     thumbDataUrl,
                     aiBlob: await aiPromise,
                     dinoInput,
+                    dinoProblem,
                   });
                 })
                 .catch(reject);
