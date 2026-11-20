@@ -1,6 +1,9 @@
 {
 	"name": "poonam-creation-backend",
 	"main": "src/index.ts",
+	// Only the website reaches the server (Pages forwards /api over a service binding); no public workers.dev address.
+	"workers_dev": false,
+	"preview_urls": false,
 	"compatibility_date": "2025-04-01",
 	"compatibility_flags": [
 		"nodejs_compat"
