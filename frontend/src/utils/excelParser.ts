@@ -1,11 +1,30 @@
 import * as XLSX from 'xlsx';
 
+/** One cell as Excel has it: its value, and the text Excel shows for it (used for design codes, so 00123 stays 00123). */
+export interface CellInfo {
+  v: string | number | boolean;
+  text: string;
+  /** The cell is formatted as a date in Excel (a design code like 10-12 may have been turned into a date by Excel). */
+  isDate: boolean;
+}
+
+/** A data row with its real Excel row number (as shown at the left edge in Excel). */
+export interface ParsedDataRow {
+  rowNumber: number;
+  cells: Record<string, CellInfo | undefined>;
+  /** Columns where this row is part of a cell merged over several rows: the rows it covers and the shown value. */
+  merged: Record<string, { from: number; to: number; text: string } | undefined>;
+}
+
 export interface ParsedExcelResult {
   sheetName: string;
   headerRowIndex: number;
+  /** Excel row number of the header row. */
+  headerRowNumber: number;
   detectedColumns: string[];
   columnSamples: Record<string, string[]>;
   rawRows: Record<string, any>[];
+  rows: ParsedDataRow[];
   totalDataRows: number;
   skippedHeaderCount: number;
 }
@@ -21,213 +40,166 @@ const HEADER_KEYWORDS = [
   'amount', 'val', 'value', 'sr', 'no', 'sno', 'sales', 'purchase', 'status', 'date',
 ];
 
-/**
- * Propagate values of merged cells across the entire merge range.
- * This ensures vertically and horizontally merged cells (e.g. "Safety Stock" and "Stock Status")
- * are not lost as empty cells in SheetJS 2D output.
- */
-function applyWorksheetMerges(worksheet: XLSX.WorkSheet): any[][] {
-  const merges = worksheet['!merges'] || [];
-  if (merges.length > 0) {
-    for (const m of merges) {
-      const startCellAddr = XLSX.utils.encode_cell(m.s);
-      const startCell = worksheet[startCellAddr];
-      if (!startCell || startCell.v === undefined || startCell.v === '') continue;
-
-      for (let R = m.s.r; R <= m.e.r; ++R) {
-        for (let C = m.s.c; C <= m.e.c; ++C) {
-          if (R === m.s.r && C === m.s.c) continue;
-          const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
-          if (!worksheet[cellAddr] || worksheet[cellAddr].v === undefined || worksheet[cellAddr].v === '') {
-            worksheet[cellAddr] = { ...startCell };
-          }
-        }
-      }
-    }
+function cellInfo(cell: XLSX.CellObject | undefined): CellInfo | undefined {
+  if (!cell || cell.v === undefined || cell.v === null) return undefined;
+  if (cell.t === 'n') {
+    const isDate = typeof cell.z === 'string' ? XLSX.SSF.is_date(cell.z) : false;
+    const text = (cell.w ?? String(cell.v)).trim();
+    return { v: cell.v as number, text, isDate };
   }
-
-  return XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    defval: '',
-    blankrows: false,
-  });
+  if (cell.t === 'd') {
+    const d = cell.v as unknown as Date;
+    return { v: cell.w ?? String(d), text: (cell.w ?? String(d)).trim(), isDate: true };
+  }
+  if (cell.t === 'b') return { v: cell.v as boolean, text: String(cell.v), isDate: false };
+  if (cell.t === 'e') return { v: cell.w ?? '#ERROR', text: cell.w ?? '#ERROR', isDate: false };
+  const str = String(cell.v);
+  if (str.trim() === '') return undefined;
+  return { v: str, text: str, isDate: false };
 }
 
 /**
  * Intelligently parse an Excel worksheet:
- * 1. Propagates merged cells (e.g. vertical merges spanning multiple header rows)
- * 2. Distinguishes titles/headings from the real column header row
- * 3. Supports 2-tier grouped headers (e.g. "Stock Balance - Balance Qty", "Safety Stock")
- * 4. Extracts only the genuine column names (no top titles)
- * 5. Extracts sample preview values for each column
- * 6. Returns parsed data rows mapped by detected column names
+ * 1. Finds the real column header row (titles/banners above it are skipped); 2-tier grouped headers supported
+ * 2. Keeps every value exactly as in Excel (nothing is converted), with the real Excel row number of every row
+ * 3. Merged cells: in the title/header area the merged text fills the whole range (grouped headers). In the DATA
+ *    area nothing is copied: the value stays in its first row and every row of the range is marked, so the import
+ *    can ask the user instead of guessing (agreed 2026-11-21, E8).
  */
 export function parseExcelWorksheet(worksheet: XLSX.WorkSheet, sheetName: string): ParsedExcelResult {
-  // Read as raw 2D array with merged cells populated
-  const rawGrid = applyWorksheetMerges(worksheet);
+  const ref = worksheet['!ref'];
+  if (!ref) throw new Error('The spreadsheet is empty.');
+  const range = XLSX.utils.decode_range(ref);
+  const merges = worksheet['!merges'] || [];
 
-  if (!rawGrid || rawGrid.length === 0) {
-    throw new Error('The spreadsheet is empty.');
+  // Text of every cell, header-area merges filled in (only used to find and name the columns)
+  const mergedText = new Map<string, string>();
+  for (const m of merges) {
+    const top = cellInfo(worksheet[XLSX.utils.encode_cell(m.s)]);
+    if (!top) continue;
+    for (let R = m.s.r; R <= m.e.r; ++R) for (let C = m.s.c; C <= m.e.c; ++C) mergedText.set(`${R}:${C}`, top.text);
   }
+  const textAt = (r: number, c: number) => {
+    const info = cellInfo(worksheet[XLSX.utils.encode_cell({ r, c })]);
+    return (info?.text ?? mergedText.get(`${r}:${c}`) ?? '').trim();
+  };
+  const textRow = (r: number) => {
+    const out: string[] = [];
+    for (let c = range.s.c; c <= range.e.c; c++) out.push(textAt(r, c));
+    return out;
+  };
+  const isBlank = (cells: string[]) => cells.every((x) => x === '');
 
-  // Find the true header row among the first 20 rows
-  const maxScanRows = Math.min(20, rawGrid.length);
-  let bestRowIndex = 0;
+  // Find the true header row among the first 20 non-blank rows
+  const candidates: number[] = [];
+  for (let r = range.s.r; r <= range.e.r && candidates.length < 20; r++) if (!isBlank(textRow(r))) candidates.push(r);
+  if (candidates.length === 0) throw new Error('The spreadsheet is empty.');
+
+  let bestRow = candidates[0];
   let highestScore = -1000;
-
-  for (let r = 0; r < maxScanRows; r++) {
-    const row = rawGrid[r] || [];
-    const nonBlankCells = row
-      .map((val) => String(val ?? '').trim())
-      .filter((val) => val.length > 0);
-
-    // A header row must have at least 2 distinct non-empty column titles
-    if (nonBlankCells.length < 2) {
-      continue;
-    }
-
-    // If all non-blank cells have the exact same text, it's a merged title/banner across the sheet
+  for (const r of candidates) {
+    const nonBlankCells = textRow(r).filter((val) => val.length > 0);
+    if (nonBlankCells.length < 2) continue;
     const uniqueValues = new Set(nonBlankCells.map((c) => c.toLowerCase()));
-    if (uniqueValues.size <= 1) {
-      continue;
-    }
-
+    if (uniqueValues.size <= 1) continue; // a title merged across the sheet
     let stringCount = 0;
     let numberCount = 0;
     let keywordCount = 0;
-
     for (const cell of nonBlankCells) {
-      if (!isNaN(Number(cell)) && cell !== '') {
-        numberCount++;
-      } else {
+      if (!isNaN(Number(cell)) && cell !== '') numberCount++;
+      else {
         stringCount++;
         const lower = cell.toLowerCase();
-        for (const kw of HEADER_KEYWORDS) {
-          if (lower === kw || lower.includes(kw)) {
-            keywordCount++;
-            break;
-          }
-        }
+        if (HEADER_KEYWORDS.some((kw) => lower === kw || lower.includes(kw))) keywordCount++;
       }
     }
-
-    // Data rows have mostly numbers (quantities, dates, balances); header rows have labels
-    if (numberCount > stringCount) {
-      continue;
-    }
-
+    if (numberCount > stringCount) continue; // data rows are mostly numbers
     const score = uniqueValues.size * 10 + keywordCount * 5 + stringCount * 2 - numberCount * 20;
-
     if (score > highestScore) {
       highestScore = score;
-      bestRowIndex = r;
+      bestRow = r;
     }
   }
 
-  const headerRow = rawGrid[bestRowIndex] || [];
-  // Check if there is a parent group header row immediately above
-  const parentRow = bestRowIndex > 0 ? rawGrid[bestRowIndex - 1] || [] : null;
-
-  // Verify if parentRow is a genuine group header row (has multiple distinct group labels)
+  const headerRow = textRow(bestRow).map((v) => v.replace(/\s+/g, ' '));
+  const prevIdx = candidates.indexOf(bestRow) - 1;
+  const parentRow = prevIdx >= 0 ? textRow(candidates[prevIdx]).map((v) => v.replace(/\s+/g, ' ')) : null;
   const isParentGroupRow = parentRow
     ? (() => {
-        const pCells = parentRow.map((v: any) => String(v ?? '').trim()).filter(Boolean);
-        const pUniq = new Set(pCells.map((v: string) => v.toLowerCase()));
+        const pUniq = new Set(parentRow.filter(Boolean).map((v) => v.toLowerCase()));
         return pUniq.size >= 2 && pUniq.size <= headerRow.length;
       })()
     : false;
 
   const detectedColumns: string[] = [];
-  const columnIndexMap: { colName: string; rawIdx: number }[] = [];
+  const columnIndexMap: { colName: string; c: number }[] = [];
   const seenNames = new Map<string, number>();
-
-  for (let c = 0; c < headerRow.length; c++) {
-    const sub = String(headerRow[c] ?? '').trim().replace(/\s+/g, ' ');
-    const parent = isParentGroupRow && parentRow ? String(parentRow[c] ?? '').trim().replace(/\s+/g, ' ') : '';
-
-    if (!sub && !parent) continue;
-
+  headerRow.forEach((sub, i) => {
+    const c = range.s.c + i;
+    const parent = isParentGroupRow && parentRow ? parentRow[i] : '';
+    if (!sub && !parent) return;
     let colName = sub;
-    if (!colName) {
-      colName = parent;
-    } else if (
-      parent &&
-      parent.toLowerCase() !== sub.toLowerCase() &&
-      !parent.toLowerCase().includes('tracker') &&
-      !parent.toLowerCase().includes('value>>')
-    ) {
-      // Disambiguate multi-level headers: e.g. "Stock Balance - Item Name"
-      colName = `${parent} - ${sub}`;
+    if (!colName) colName = parent;
+    else if (parent && parent.toLowerCase() !== sub.toLowerCase() && !parent.toLowerCase().includes('tracker') && !parent.toLowerCase().includes('value>>')) {
+      colName = `${parent} - ${sub}`; // "Stock Balance - Item Name"
     }
-
-    // Handle duplicate column names
     const count = seenNames.get(colName.toLowerCase()) || 0;
     seenNames.set(colName.toLowerCase(), count + 1);
-
     const uniqueName = count > 0 ? `${colName} (${count + 1})` : colName;
     detectedColumns.push(uniqueName);
-    columnIndexMap.push({ colName: uniqueName, rawIdx: c });
+    columnIndexMap.push({ colName: uniqueName, c });
+  });
+  if (detectedColumns.length === 0) throw new Error('Could not identify any valid column headers in this spreadsheet.');
+
+  // Data-area merges: which (row, column) cells belong to a merged range spanning several rows
+  const dataMerge = new Map<string, { from: number; to: number; text: string }>();
+  for (const m of merges) {
+    if (m.e.r <= bestRow || m.e.r === m.s.r) continue;
+    const top = cellInfo(worksheet[XLSX.utils.encode_cell(m.s)]);
+    const info = { from: Math.max(m.s.r, bestRow + 1) + 1, to: m.e.r + 1, text: top?.text ?? '' };
+    for (let R = Math.max(m.s.r, bestRow + 1); R <= m.e.r; ++R) for (let C = m.s.c; C <= m.e.c; ++C) dataMerge.set(`${R}:${C}`, info);
   }
 
-  if (detectedColumns.length === 0) {
-    throw new Error('Could not identify any valid column headers in this spreadsheet.');
-  }
-
-  // Parse data rows starting after the header row
+  const rows: ParsedDataRow[] = [];
   const rawRows: Record<string, any>[] = [];
   const columnSamples: Record<string, string[]> = {};
-  detectedColumns.forEach((col) => {
-    columnSamples[col] = [];
-  });
+  detectedColumns.forEach((col) => (columnSamples[col] = []));
 
-  for (let r = bestRowIndex + 1; r < rawGrid.length; r++) {
-    const row = rawGrid[r] || [];
-
-    // Check if row has any non-empty data in the mapped columns
-    let hasData = false;
+  for (let r = bestRow + 1; r <= range.e.r; r++) {
+    const cells: ParsedDataRow['cells'] = {};
+    const merged: ParsedDataRow['merged'] = {};
     const rowObj: Record<string, any> = {};
-
-    for (const { colName, rawIdx } of columnIndexMap) {
-      const val = row[rawIdx];
-      const stringVal = val !== undefined && val !== null ? String(val).trim() : '';
-
-      if (stringVal.length > 0) {
+    let hasData = false;
+    for (const { colName, c } of columnIndexMap) {
+      const info = cellInfo(worksheet[XLSX.utils.encode_cell({ r, c })]);
+      const m = dataMerge.get(`${r}:${c}`);
+      if (m) merged[colName] = m;
+      if (info) {
         hasData = true;
-        rowObj[colName] = typeof val === 'number' ? val : stringVal;
-
-        // Collect sample values (up to 3 distinct samples)
-        if (
-          columnSamples[colName].length < 3 &&
-          !columnSamples[colName].includes(stringVal)
-        ) {
-          columnSamples[colName].push(stringVal);
-        }
+        cells[colName] = info;
+        rowObj[colName] = typeof info.v === 'number' ? info.v : info.text;
+        if (columnSamples[colName].length < 3 && !columnSamples[colName].includes(info.text)) columnSamples[colName].push(info.text);
       } else {
         rowObj[colName] = '';
       }
     }
-
-    // Check for summary/total rows at the end of the sheet
-    const firstCell = String(row[columnIndexMap[0]?.rawIdx] ?? '').trim().toLowerCase();
-    const isTotalRow =
-      firstCell === 'total' ||
-      firstCell === 'grand total' ||
-      firstCell === 'totals' ||
-      firstCell.startsWith('total ');
-
-    if (hasData && !isTotalRow) {
-      rawRows.push(rowObj);
-    }
+    if (!hasData) continue; // blank row (its number is simply skipped; the others keep their real numbers)
+    const firstCell = (cells[columnIndexMap[0]?.colName]?.text ?? '').trim().toLowerCase();
+    if (firstCell === 'total' || firstCell === 'grand total' || firstCell === 'totals' || firstCell.startsWith('total ')) continue;
+    rows.push({ rowNumber: r + 1, cells, merged });
+    rawRows.push(rowObj);
   }
 
   return {
     sheetName,
-    headerRowIndex: bestRowIndex,
+    headerRowIndex: bestRow,
+    headerRowNumber: bestRow + 1,
     detectedColumns,
     columnSamples,
     rawRows,
-    totalDataRows: rawRows.length,
-    skippedHeaderCount: bestRowIndex,
+    rows,
+    totalDataRows: rows.length,
+    skippedHeaderCount: candidates.indexOf(bestRow),
   };
 }
 

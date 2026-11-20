@@ -260,4 +260,200 @@ excel.post('/commit-row', async (c) => {
   return c.json({ success: true, id, item_id: body.item_id.trim(), item: createdRow }, 201);
 });
 
+// ═══ Batch import (agreed 2026-11-21) ══════════════════════════════════════════════════════════════════════════
+// The app checks every row itself first (same rules, same wording); the server checks them all again here and is the
+// only judge. Rows are saved 50 at a time with their sync record in ONE transaction per row group, and every row gets
+// its own answer, so a single bad row never blocks the others and nothing is half-saved.
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BATCH_MAX = 50;
+const CHECK_MAX = 500;
+
+type ImportRow = {
+  id: string;
+  item_id: string;
+  quantity: number;
+  unit?: string;
+  low_stock_threshold: number;
+  cost_price?: number;
+};
+
+const VALID_CATEGORIES = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil'] as const;
+const HAS_COST = new Set(['plated_jewelry', 'stones', 'foil']);
+
+/** The same problems, in the same words, as the app shows (frontend/src/utils/excelImport.ts rowProblems). */
+function rowProblems(category: string, r: ImportRow): string[] {
+  const out: string[] = [];
+  const name = CATEGORY_NAME[category];
+  const id = typeof r.item_id === 'string' ? r.item_id.trim() : '';
+  if (!id) out.push('Design code is empty.');
+  else if (id.length > 255) out.push('Design code is too long (more than 255 characters).');
+  const num = (v: unknown, label: string, decimalsOk: boolean, required = true) => {
+    if (v === undefined || v === null || (v as unknown) === '') {
+      if (required) out.push(`${label} is empty.`);
+      return;
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v)) return void out.push(`${label} is not a number.`);
+    if (v < 0) return void out.push(`${label} can't be negative (${v}).`);
+    if (!decimalsOk && !Number.isInteger(v)) out.push(`${label} has decimals (${v}). ${name} is counted in whole numbers; enter a whole number.`);
+  };
+  num(r.quantity, 'Quantity', category === 'foil');
+  num(r.low_stock_threshold, 'Low stock level', category === 'foil');
+  if (HAS_COST.has(category)) num(r.cost_price, 'Cost price', true);
+  if (category === 'plated_jewelry' || category === 'raw_jewelry') {
+    if (!r.unit) out.push('Unit is empty. Choose PC, KGS, SET, JODI or GRMS.');
+    else if (validateUnit(r.unit, 'unit')) out.push(`Unit "${r.unit}" is not one the app knows. Choose PC, KGS, SET, JODI or GRMS.`);
+  }
+  return out;
+}
+
+/** Existing items (deleted ones too: their IDs cannot be reused) by ID key, for up to CHECK_MAX keys. */
+async function existingByKey(db: D1Database, table: string, keys: string[]) {
+  const map = new Map<string, { item_id: string; is_deleted: number }>();
+  if (keys.length === 0) return map;
+  const res = await db
+    .prepare(`SELECT item_id, is_deleted, ${ITEM_KEY_SQL} AS k FROM ${table} WHERE ${ITEM_KEY_SQL} IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(keys))
+    .all<{ item_id: string; is_deleted: number; k: string }>();
+  for (const r of res.results || []) map.set(r.k, { item_id: r.item_id, is_deleted: r.is_deleted });
+  return map;
+}
+
+function existsMessage(typed: string, found: { item_id: string; is_deleted: number }, category: string): string {
+  const as = found.item_id !== typed.trim() ? ` as "${found.item_id}"` : '';
+  return found.is_deleted
+    ? `"${typed.trim()}" was used before${as} for an item that was later deleted in ${CATEGORY_NAME[category]}. A design code can't be reused; use a different code.`
+    : `"${typed.trim()}" already exists${as} in ${CATEGORY_NAME[category]}. Import only adds new designs; to change its stock use Stock Operations. (Codes that differ only in capitals, spaces or dashes are the same design.)`;
+}
+
+/**
+ * POST /api/excel/check-rows  { category, item_ids: string[] (<= 500) }
+ * Which of these design codes already exist (one query instead of one request per row).
+ */
+excel.post('/check-rows', async (c) => {
+  const body = await c.req.json<{ category: string; item_ids: unknown }>().catch(() => null);
+  if (!body || !VALID_CATEGORIES.includes(body.category as (typeof VALID_CATEGORIES)[number])) return c.json({ error: 'Invalid category' }, 400);
+  if (!Array.isArray(body.item_ids) || body.item_ids.length > CHECK_MAX) return c.json({ error: `Send between 0 and ${CHECK_MAX} design codes at a time.` }, 400);
+  const ids = body.item_ids.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+  const found = await existingByKey(c.env.DB, body.category, [...new Set(ids.map(itemKey))]);
+  const existing: Record<string, string> = {};
+  for (const id of ids) {
+    const f = found.get(itemKey(id));
+    if (f) existing[id] = existsMessage(id, f, body.category);
+  }
+  return c.json({ existing });
+});
+
+/**
+ * POST /api/excel/save-rows  { category, rows: ImportRow[] (<= 50) }
+ * Each row carries an id made by the app, so sending the same rows again (e.g. the answer was lost on a bad
+ * connection) never creates a second copy: a row whose id is already saved is reported as saved.
+ * Answer: { results: [{ id, status: 'saved' | 'not_saved', message?, item? }] } in the order sent.
+ */
+excel.post('/save-rows', async (c) => {
+  const body = await c.req.json<{ category: string; rows: unknown }>().catch(() => null);
+  if (!body || !VALID_CATEGORIES.includes(body.category as (typeof VALID_CATEGORIES)[number])) return c.json({ error: 'Invalid category' }, 400);
+  if (!Array.isArray(body.rows) || body.rows.length === 0 || body.rows.length > BATCH_MAX) {
+    return c.json({ error: `Send between 1 and ${BATCH_MAX} rows at a time.` }, 400);
+  }
+  const category = body.category;
+  const table = category;
+  const rows = body.rows as ImportRow[];
+  const results: { id: string; status: 'saved' | 'not_saved'; message?: string; item?: Record<string, unknown> }[] = rows.map((r) => ({
+    id: typeof r?.id === 'string' ? r.id : '',
+    status: 'not_saved',
+  }));
+
+  // 1. Rules for every row
+  const candidates: number[] = [];
+  rows.forEach((r, i) => {
+    if (!r || typeof r !== 'object' || !UUID_RE.test(String(r.id))) {
+      results[i].message = 'This row could not be read. Reload the Excel page and try again.';
+      return;
+    }
+    const problems = rowProblems(category, r);
+    if (problems.length) results[i].message = problems.join(' ');
+    else candidates.push(i);
+  });
+
+  // 2. Already saved by an earlier attempt of this same import (same row id): report as saved
+  const ids = candidates.map((i) => rows[i].id);
+  const savedBefore = new Map<string, Record<string, unknown>>();
+  if (ids.length) {
+    const res = await c.env.DB.prepare(`SELECT * FROM ${table} WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(ids)).all<Record<string, unknown>>();
+    for (const r of res.results || []) savedBefore.set(String(r.id), r);
+  }
+  const toInsert: number[] = [];
+  for (const i of candidates) {
+    const before = savedBefore.get(rows[i].id);
+    if (before) Object.assign(results[i], { status: 'saved', item: before });
+    else toInsert.push(i);
+  }
+
+  // 3. Design code already used (in the database, or twice in this group)
+  const existing = await existingByKey(c.env.DB, table, [...new Set(toInsert.map((i) => itemKey(rows[i].item_id)))]);
+  const firstInGroup = new Map<string, number>();
+  const ready: number[] = [];
+  for (const i of toInsert) {
+    const k = itemKey(rows[i].item_id);
+    const f = existing.get(k);
+    if (f) {
+      results[i].message = existsMessage(rows[i].item_id, f, category);
+      continue;
+    }
+    if (firstInGroup.has(k)) {
+      results[i].message = `Same design code as "${rows[firstInGroup.get(k)!].item_id.trim()}" in this file. Codes that differ only in capitals, spaces or dashes are the same design.`;
+      continue;
+    }
+    firstInGroup.set(k, i);
+    ready.push(i);
+  }
+
+  // 4. Save: each item and its sync record together (all or nothing per item)
+  const cols = ((await c.env.DB.prepare(`PRAGMA table_info(${table})`).all<{ name: string }>()).results || []).map((r) => r.name);
+  const payloadSql = `json_object(${cols.map((n) => `'${n}', ${n}`).join(', ')})`;
+  const statementsFor = (i: number) => {
+    const r = rows[i];
+    const unit = table === 'stones' ? 'PC' : table === 'foil' ? 'KGS' : String(r.unit);
+    const insert = HAS_COST.has(table)
+      ? c.env.DB.prepare(`INSERT INTO ${table} (id, item_id, quantity, unit, low_stock_threshold, cost_price_cents) VALUES (?, ?, ?, ?, ?, ?)`).bind(
+          r.id, r.item_id.trim(), r.quantity, unit, r.low_stock_threshold, rupeesToPaisa(Number(r.cost_price)),
+        )
+      : c.env.DB.prepare(`INSERT INTO ${table} (id, item_id, quantity, unit, low_stock_threshold) VALUES (?, ?, ?, ?, ?)`).bind(
+          r.id, r.item_id.trim(), r.quantity, unit, r.low_stock_threshold,
+        );
+    const log = c.env.DB.prepare(
+      `INSERT INTO sync_changes (entity_type, entity_id, operation, payload) SELECT ?, id, 'CREATE', ${payloadSql} FROM ${table} WHERE id = ?`,
+    ).bind(table, r.id);
+    return [insert, log];
+  };
+  const saved: number[] = [];
+  if (ready.length) {
+    try {
+      await c.env.DB.batch(ready.flatMap(statementsFor)); // one transaction for the whole group
+      saved.push(...ready);
+    } catch {
+      // Something in the group failed (e.g. the same code saved from another device a moment ago): save one by one
+      for (const i of ready) {
+        try {
+          await c.env.DB.batch(statementsFor(i));
+          saved.push(i);
+        } catch (err) {
+          results[i].message = isDuplicateIdError(err)
+            ? duplicateIdMessage(rows[i].item_id, null, CATEGORY_NAME[category])
+            : 'Could not be saved because of a server problem. Try saving again.';
+        }
+      }
+    }
+  }
+  if (saved.length) {
+    const res = await c.env.DB.prepare(`SELECT * FROM ${table} WHERE id IN (SELECT value FROM json_each(?))`)
+      .bind(JSON.stringify(saved.map((i) => rows[i].id)))
+      .all<Record<string, unknown>>();
+    const byId = new Map((res.results || []).map((r) => [String(r.id), r]));
+    for (const i of saved) Object.assign(results[i], { status: 'saved', item: byId.get(rows[i].id) });
+  }
+  return c.json({ results });
+});
+
 export default excel;

@@ -266,6 +266,21 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(row),
       }),
+    /** Which design codes already exist (up to 500 per call). Answer: code -> message. */
+    checkRows: (category: string, item_ids: string[]) =>
+      request<{ existing: Record<string, string> }>('/api/excel/check-rows', {
+        method: 'POST',
+        body: JSON.stringify({ category, item_ids }),
+      }),
+    /** Save up to 50 rows; every row gets its own answer. */
+    saveRows: (
+      category: string,
+      rows: { id: string; item_id: string; quantity: number; unit?: string; low_stock_threshold: number; cost_price?: number }[],
+    ) =>
+      request<{ results: { id: string; status: 'saved' | 'not_saved'; message?: string; item?: Record<string, unknown> }[] }>(
+        '/api/excel/save-rows',
+        { method: 'POST', body: JSON.stringify({ category, rows }) },
+      ),
   },
 
   // Backups & Storage
