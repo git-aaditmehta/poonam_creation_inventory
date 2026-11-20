@@ -2,11 +2,9 @@
  * Registers the service worker (production builds only) and keeps the installed app (PWA) up to date.
  *
  * How a new version reaches a phone (agreed 2026-11-21, after the client's installed app stayed on an old version):
- *  - The app looks for a new version when it opens, when it comes back to the screen, and every 30 minutes while open.
- *  - A new version downloads in the background. When it is ready the app shows "A new version is ready — tap to
- *    update"; nobody is switched mid-work.
- *  - If a downloaded version is waiting when the app is OPENED, it is switched to straight away, as long as nobody
- *    has tapped or typed yet (first few seconds), so a phone that is simply reopened gets the latest version.
+ *  - The app looks for a new version when it opens and when it comes back to the screen (no timers).
+ *  - A new version downloads in the background. When it is ready, a bar at the top says "New update available";
+ *    tapping it (or "Update now" in Backup & Storage / the side menu) switches to it. Nobody is switched by surprise.
  *  - Backup & Storage and the side menu show the version number and a "Check for updates" button.
  */
 
@@ -27,21 +25,6 @@ export function versionLabel(v: AppVersion = APP_VERSION): string {
   return v.number ? `#${v.number}` : v.commit;
 }
 
-const CHECK_EVERY_MS = 30 * 60 * 1000;
-/** A downloaded update found within this time after opening the app is applied straight away. */
-const STARTUP_WINDOW_MS = 8000;
-const startedAt = Date.now();
-/** Set at the first tap or key press: from then on an update never switches in by itself (it could wipe typing). */
-let userActed = false;
-if (typeof window !== 'undefined') {
-  const acted = () => {
-    userActed = true;
-  };
-  window.addEventListener('pointerdown', acted, { once: true, capture: true });
-  window.addEventListener('keydown', acted, { once: true, capture: true });
-}
-const justOpened = () => !userActed && Date.now() - startedAt < STARTUP_WINDOW_MS;
-
 let registration: ServiceWorkerRegistration | null = null;
 let waitingWorker: ServiceWorker | null = null;
 
@@ -60,10 +43,7 @@ function watchInstalling(reg: ServiceWorkerRegistration) {
   if (!nw) return;
   nw.addEventListener('statechange', () => {
     // "installed" while another version controls the page = an update (not the very first install)
-    if (nw.state === 'installed' && navigator.serviceWorker.controller) {
-      if (justOpened()) nw.postMessage({ type: 'SKIP_WAITING' }); // app just opened, nothing touched yet
-      else announce(nw);
-    }
+    if (nw.state === 'installed' && navigator.serviceWorker.controller) announce(nw);
   });
 }
 
@@ -73,20 +53,14 @@ export function registerServiceWorker(): void {
     try {
       const reg = await navigator.serviceWorker.register('/sw.js');
       registration = reg;
-      if (reg.waiting && navigator.serviceWorker.controller) {
-        // A version downloaded earlier is waiting and the app was just opened: switch now, before any work starts
-        if (justOpened()) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        else announce(reg.waiting);
-      }
+      // A version downloaded earlier is still waiting: show the bar again
+      if (reg.waiting && navigator.serviceWorker.controller) announce(reg.waiting);
       if (reg.installing) watchInstalling(reg);
       reg.addEventListener('updatefound', () => watchInstalling(reg));
-      // Look for a new version whenever the app is brought back to the screen, and regularly while it is open
+      // Look for a new version whenever the app is brought back to the screen
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => undefined);
       });
-      setInterval(() => {
-        if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => undefined);
-      }, CHECK_EVERY_MS);
     } catch (e) {
       console.warn('[SW] Registration failed (the app still works online):', e);
     }
@@ -107,8 +81,26 @@ export function registerServiceWorker(): void {
   });
 }
 
+const UPDATED_FLAG = 'app-updated-from';
+
+/** After an update reload: the version it came from (once), so the app can say "Updated to version #NN". */
+export function takeUpdatedFrom(): string | null {
+  try {
+    const from = sessionStorage.getItem(UPDATED_FLAG);
+    sessionStorage.removeItem(UPDATED_FLAG);
+    return from && from !== APP_VERSION.commit ? from : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Switch to the downloaded version now (reloads the page). */
 export function applyAppUpdate(): void {
+  try {
+    sessionStorage.setItem(UPDATED_FLAG, APP_VERSION.commit);
+  } catch {
+    /* private mode: no message after the reload, the update still happens */
+  }
   if (waitingWorker) waitingWorker.postMessage({ type: 'SKIP_WAITING' });
   else window.location.reload();
 }

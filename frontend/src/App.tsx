@@ -27,7 +27,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LLAMA_SCAN_ENABLED } from './config/features';
 import { saveLastUser, loadLastUser, clearLastUser, hasStoredToken, getQueueOwner, setQueueOwner } from './lib/lastUser';
 import { getPendingCount } from './lib/pendingOps';
-import { applyAppUpdate } from './lib/serviceWorker';
+import { applyAppUpdate, takeUpdatedFrom, versionLabel } from './lib/serviceWorker';
 import { syncGridPhotos, requestPersistentStorage } from './lib/photoOffline';
 import { dailyLimitMessage } from './utils/friendlyErrors';
 import { startCostingSync, stopCostingSync, syncCostingNow, costingWaitingCount, clearLocalCosting } from './lib/costingSync';
@@ -180,6 +180,11 @@ const AppContent: React.FC = () => {
     };
     window.addEventListener('cloud-daily-limit', onLimit);
     return () => window.removeEventListener('cloud-daily-limit', onLimit);
+  }, [showToast]);
+
+  // Just updated: say which version is now running
+  useEffect(() => {
+    if (takeUpdatedFrom()) showToast('success', 'App updated', `You are now on version ${versionLabel()}.`);
   }, [showToast]);
 
   // A new app version has been downloaded in the background
@@ -391,7 +396,7 @@ const AppContent: React.FC = () => {
               background: 'var(--teal-deep)', color: '#fff',
             }}
           >
-            A new version of the app is ready — tap to update
+            New update available — tap here to update (or tap “Update now” in Backup &amp; Storage)
           </button>
         )}
 
