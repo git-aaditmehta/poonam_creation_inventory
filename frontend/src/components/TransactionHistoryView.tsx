@@ -7,6 +7,7 @@ import {
   PlusCircle,
   MinusCircle,
   Loader2,
+  FileText,
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
@@ -15,6 +16,8 @@ import { formatIST, istDayStartUtc, istDayEndUtc, todayIST } from '../utils/time
 import { itemIdSearchSql } from '../utils/itemId';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
+import { StockPdfModal } from './StockPdfModal';
+import type { GeneratedPdfResult } from '../utils/pdfGenerator';
 
 export const TransactionHistoryView: React.FC = () => {
   const { showToast } = useToast();
@@ -138,9 +141,8 @@ export const TransactionHistoryView: React.FC = () => {
     };
   }, [fetchHistory]);
 
-  // Exports ALL matching entries (not only the 50 on screen), with Indian time
-  const handleExportExcel = async () => {
-    try {
+  /** ALL entries matching the filters (not only the 50 on screen): from the cloud, or offline this phone's copy. */
+  const collectAllRows = async (): Promise<{ rows: Transaction[]; fromCloud: boolean }> => {
       let rows: Transaction[] = [];
       let fromCloud = false;
       if (navigator.onLine) {
@@ -166,6 +168,34 @@ export const TransactionHistoryView: React.FC = () => {
         const { where, params } = localWhere();
         rows = await localDb.query<Transaction>(`SELECT * FROM transactions ${where} ORDER BY datetime(created_at) DESC`, params);
       }
+      return { rows, fromCloud };
+  };
+
+  // PDF of exactly what the filters show (all pages), with the filters printed on it
+  const [pdfResult, setPdfResult] = useState<GeneratedPdfResult | null>(null);
+  const [makingPdf, setMakingPdf] = useState(false);
+  const handleGeneratePdf = async () => {
+    setMakingPdf(true);
+    try {
+      const { rows, fromCloud } = await collectAllRows();
+      if (rows.length === 0) {
+        showToast('warning', 'Nothing to put in the PDF', 'No stock movements match the selected filters. Change the filters and try again.');
+        return;
+      }
+      const { generateHistoryPdf } = await import('../utils/historyPdf');
+      setPdfResult(generateHistoryPdf({ rows, filters: { category, dateFrom, dateTo, itemSearch }, complete: fromCloud }));
+      if (!fromCloud) showToast('info', 'Made offline', 'Only the recent movements stored on this phone are in this PDF. Connect to the internet for the complete history.');
+    } catch (err: any) {
+      showToast('error', 'PDF could not be made', errorText(err));
+    } finally {
+      setMakingPdf(false);
+    }
+  };
+
+  // Exports ALL matching entries (not only the 50 on screen), with Indian time
+  const handleExportExcel = async () => {
+    try {
+      const { rows, fromCloud } = await collectAllRows();
       if (rows.length === 0) {
         showToast('warning', 'Nothing to export', 'No stock movements match the selected filters.');
         return;
@@ -220,9 +250,14 @@ export const TransactionHistoryView: React.FC = () => {
           </p>
         </div>
 
-        <button onClick={handleExportExcel} className="btn btn-secondary">
-          <Download size={15} /> Export Audit Log (.xlsx)
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          <button onClick={handleExportExcel} className="btn btn-secondary">
+            <Download size={15} /> Export Audit Log (.xlsx)
+          </button>
+          <button onClick={handleGeneratePdf} className="btn btn-secondary" disabled={makingPdf} title="PDF of the movements matching the filters below">
+            {makingPdf ? <Loader2 size={15} className="animate-spin" /> : <FileText size={15} />} {makingPdf ? 'Generating...' : 'Generate PDF'}
+          </button>
+        </div>
       </div>
 
       {/* Aggregate Cards */}
@@ -509,6 +544,20 @@ export const TransactionHistoryView: React.FC = () => {
             Next
           </button>
         </div>
+      )}
+      {pdfResult && (
+        <StockPdfModal
+          pdfResult={pdfResult}
+          categoryTitle="Stock History"
+          heading="Stock Movement History"
+          subtitle={`${pdfResult.totalItems} movement${pdfResult.totalItems === 1 ? '' : 's'} • matching the filters on screen`}
+          shareText={`Stock movement history: ${pdfResult.totalItems} movement${pdfResult.totalItems === 1 ? '' : 's'}.`}
+          onClose={() => {
+            URL.revokeObjectURL(pdfResult.url);
+            setPdfResult(null);
+          }}
+          showToast={showToast}
+        />
       )}
     </div>
   );
