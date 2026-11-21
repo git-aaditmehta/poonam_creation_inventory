@@ -67,3 +67,25 @@ export function setQueueOwner(userId: string | null): void {
     /* ignore */
   }
 }
+
+/**
+ * The username typed at the last successful login on this device (agreed 2026-11-21): shown again on the login
+ * screen. Kept after logout; never a password.
+ */
+const USERNAME_KEY = 'last_login_username';
+
+export function saveLastUsername(username: string): void {
+  try {
+    localStorage.setItem(USERNAME_KEY, username);
+  } catch {
+    /* storage blocked: the field is simply empty next time */
+  }
+}
+
+export function loadLastUsername(): string {
+  try {
+    return localStorage.getItem(USERNAME_KEY) || '';
+  } catch {
+    return '';
+  }
+}

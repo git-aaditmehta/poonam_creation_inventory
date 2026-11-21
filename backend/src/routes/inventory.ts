@@ -385,9 +385,10 @@ inventory.route('/stones', stones);
 inventory.route('/foil', foil);
 
 // ============================================================
-// Low Stock — Owner only, across all categories
+// Low Stock — owner and staff (agreed 2026-11-21), across all categories. Staff never receive cost prices.
 // ============================================================
-inventory.get('/low-stock', authMiddleware, ownerOnly, async (c) => {
+inventory.get('/low-stock', authMiddleware, async (c) => {
+  const role = c.get('session').role;
   const categories = [
     { table: 'plated_jewelry', name: 'Plated Jewelry', hasCost: true },
     { table: 'raw_jewelry', name: 'Raw Jewelry', hasCost: false },
@@ -406,7 +407,7 @@ inventory.get('/low-stock', authMiddleware, ownerOnly, async (c) => {
 
     for (const row of results.results || []) {
       lowStockItems.push({
-        ...mapItem(row, 'owner', cat.hasCost),
+        ...mapItem(row, role, cat.hasCost),
         category: cat.table,
         category_name: cat.name,
       });

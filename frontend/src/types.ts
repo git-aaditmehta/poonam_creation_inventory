@@ -73,6 +73,11 @@ export interface Transaction {
   performer_name: string;
   idempotency_key?: string;
   created_at: string;
+  /** This entry is an undo of that movement (2026-11-21). */
+  reverses_id?: string | null;
+  /** From the cloud: this movement was undone by … at … */
+  undone_by?: string | null;
+  undone_at?: string | null;
 }
 
 export interface HistoryResponse {

@@ -210,6 +210,12 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    /** Undo a stock movement (by its cloud id, or the idempotency key of a just-made operation). */
+    undo: (ref: { transaction_id?: string; idempotency_key?: string }) =>
+      request<{ success: boolean; transaction_id: string; reverses_id: string; category: string; item_uuid: string; item_display_id: string; operation: 'add' | 'subtract'; quantity_change: number; new_balance: number; unit: string; message: string }>(
+        '/api/stock/undo',
+        { method: 'POST', body: JSON.stringify(ref) },
+      )
   },
 
   // Transaction History

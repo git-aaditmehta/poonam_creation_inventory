@@ -86,7 +86,7 @@ export function generateHistoryPdf({ rows, filters, complete }: HistoryPdfOption
       formatIST(t.created_at),
       CATEGORY_LABEL[t.category] || t.category,
       t.item_display_id,
-      t.operation === 'add' ? 'STOCK IN' : 'STOCK OUT',
+      `${t.operation === 'add' ? 'STOCK IN' : 'STOCK OUT'}${t.reverses_id ? '\n(undo)' : ''}${t.undone_by ? `\n(undone by ${t.undone_by})` : ''}`,
       `${t.operation === 'add' ? '+' : '-'}${num(Number(t.quantity_change))}`,
       t.unit,
       num(Number(t.quantity_before)),
@@ -107,7 +107,7 @@ export function generateHistoryPdf({ rows, filters, complete }: HistoryPdfOption
     },
     didParseCell: (d) => {
       if (d.section === 'body' && (d.column.index === 4 || d.column.index === 5)) {
-        d.cell.styles.textColor = (d.row.raw as string[])[4] === 'STOCK IN' ? [4, 120, 87] : [185, 28, 28];
+        d.cell.styles.textColor = String((d.row.raw as string[])[4]).startsWith('STOCK IN') ? [4, 120, 87] : [185, 28, 28];
       }
     },
     margin: { left: 12, right: 12, bottom: 14 },

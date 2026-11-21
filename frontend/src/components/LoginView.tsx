@@ -5,6 +5,7 @@ import type { User } from '../types';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
 import { PasswordInput } from './PasswordInput';
+import { loadLastUsername, saveLastUsername } from '../lib/lastUser';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
@@ -12,15 +13,16 @@ interface LoginViewProps {
 
 export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const { showToast } = useToast();
-  const [identifier, setIdentifier] = useState('nimrocks@gmail.com');
-  const [password, setPassword] = useState('admin123456');
+  // Never a built-in account: only the username last used on THIS device (no password is ever filled in)
+  const [identifier, setIdentifier] = useState(() => loadLastUsername());
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!identifier.trim() || !password) {
-      setErrorMessage('Please enter both your identifier and password');
+      setErrorMessage('Please enter your username (or email) and your password.');
       return;
     }
 
@@ -29,6 +31,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
     try {
       const res = await api.auth.login(identifier.trim(), password);
+      saveLastUsername(identifier.trim());
       showToast('success', 'Welcome back', `Signed in as ${res.user.role === 'owner' ? 'Owner' : 'Staff'}`);
       onLoginSuccess(res.user);
     } catch (err: any) {
@@ -43,12 +46,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const setPreset = (emailOrUser: string, pass: string) => {
-    setIdentifier(emailOrUser);
-    setPassword(pass);
-    setErrorMessage(null);
   };
 
   return (
@@ -144,7 +141,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 style={{ paddingLeft: 38 }}
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="nimrocks@gmail.com"
+                placeholder="Email or username"
                 required
                 autoComplete="username"
               />
@@ -191,45 +188,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             )}
           </button>
 
-          {/* Quick Credential Switcher */}
-          <div
-            style={{
-              marginTop: 28,
-              paddingTop: 20,
-              borderTop: '1px solid var(--border-subtle)',
-              textAlign: 'center',
-            }}
-          >
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Quick Login
-            </span>
-            <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ flex: '1 1 120px', fontSize: 11, padding: '7px 8px' }}
-                onClick={() => setPreset('nimrocks@gmail.com', 'admin123456')}
-              >
-                👑 Owner
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ flex: '1 1 120px', fontSize: 11, padding: '7px 8px' }}
-                onClick={() => setPreset('Anshul', '123456')}
-              >
-                👷 Staff (Anshul)
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ flex: '1 1 120px', fontSize: 11, padding: '7px 8px' }}
-                onClick={() => setPreset('staff1', 'staff123')}
-              >
-                👷 Staff (staff1)
-              </button>
-            </div>
-          </div>
         </form>
       </div>
     </div>

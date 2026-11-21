@@ -4,6 +4,7 @@ import {
   MinusCircle,
   CheckCircle2,
   Loader2,
+  Undo2,
   Search,
   Package,
   Layers,
@@ -18,6 +19,7 @@ import { itemIdSearchSql } from '../utils/itemId';
 import { enqueuePendingOp, getAllPendingOps, type PendingOp } from '../lib/pendingOps';
 import { syncEngine } from '../lib/syncEngine';
 import type { InventoryCategory, BaseInventoryItem, User } from '../types';
+import { RecentStockOps, confirmAndUndo } from './RecentStockOps';
 import { useToast } from '../context/ToastContext';
 
 interface StockOperationsViewProps {
@@ -45,6 +47,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
   const [quantity, setQuantity] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<any | null>(null);
+  const [undoingReceipt, setUndoingReceipt] = useState(false);
 
   // Search items as user types — from local DB (instant) with API fallback
   useEffect(() => {
@@ -230,6 +233,9 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         unit: selectedItem.unit,
         performed_by: user?.username || 'You (Offline)',
         offline: isOffline,
+        idempotency_key: idempotencyKey,
+        created_at: nowIso,
+        undone: false,
       });
 
       setSelectedItem({
@@ -593,6 +599,45 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
             <div style={{ fontSize: 13, fontWeight: 700, marginTop: 4, color: 'var(--text-primary)' }} className="mono">
               Balance: {lastReceipt.quantity_before ?? lastReceipt.previous_balance} → {lastReceipt.new_balance} {lastReceipt.unit}
             </div>
+            {lastReceipt.undone ? (
+              <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>↶ Undone — the stock is back to {lastReceipt.quantity_before} {lastReceipt.unit}.</div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ marginTop: 10, padding: '5px 12px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                disabled={undoingReceipt}
+                onClick={async () => {
+                  if (lastReceipt.offline || !navigator.onLine) {
+                    showToast('warning', 'Undo needs internet', 'This operation has not reached the cloud yet. Remove it in Sync Queue, or undo it once you are online.');
+                    return;
+                  }
+                  setUndoingReceipt(true);
+                  const ok = await confirmAndUndo(
+                    {
+                      id: '',
+                      idempotency_key: lastReceipt.idempotency_key,
+                      operation: lastReceipt.operation,
+                      quantity_change: lastReceipt.quantity_change,
+                      unit: lastReceipt.unit,
+                      item_display_id: lastReceipt.item_id,
+                      performer_name: lastReceipt.performed_by,
+                      created_at: lastReceipt.created_at,
+                    },
+                    showToast,
+                    true,
+                  );
+                  setUndoingReceipt(false);
+                  if (ok) {
+                    setLastReceipt((r: any) => (r ? { ...r, undone: true } : r));
+                    if (selectedItem) setSelectedItem({ ...selectedItem, quantity: lastReceipt.quantity_before });
+                    onOperationSuccess?.();
+                  }
+                }}
+              >
+                {undoingReceipt ? <Loader2 size={13} className="animate-spin" /> : <Undo2 size={13} />} Undo this operation
+              </button>
+            )}
           </div>
         )}
 
@@ -662,6 +707,8 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
             </div>
           </div>
         )}
+        {/* Everyone's recent operations, with Undo (staff their own, owner anyone's; 7 days) */}
+        <RecentStockOps user={user ?? null} />
       </div>
     </div>
   );

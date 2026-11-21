@@ -315,7 +315,7 @@ class LocalSqlite {
       transactions: [
         'id', 'category', 'item_id', 'item_display_id', 'operation',
         'quantity_before', 'quantity_change', 'quantity_after', 'unit',
-        'performed_by', 'performer_name', 'idempotency_key', 'created_at',
+        'performed_by', 'performer_name', 'idempotency_key', 'created_at', 'reverses_id',
       ],
       sync_state: ['key', 'value', 'updated_at'],
       pending_ops: [

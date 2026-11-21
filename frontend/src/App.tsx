@@ -272,7 +272,7 @@ const AppContent: React.FC = () => {
 
   // Update low stock count from local DB when data changes
   const updateLowStockCount = useCallback(async () => {
-    if (!currentUser || currentUser.role !== 'owner') return;
+    if (!currentUser) return;
     try {
       // Try reading from local DB first (instant)
       await localDb.ready;
@@ -482,13 +482,13 @@ const AppContent: React.FC = () => {
             </CostingCloudGate>
           </ErrorBoundary>
         )}
-        {activeTab === 'low-stock' && currentUser.role === 'owner' && (
+        {activeTab === 'low-stock' && (
           <LowStockView
             onQuickRestock={(cat, item) => handleQuickOperate(cat, item)}
           />
         )}
-        {activeTab === 'history' && currentUser.role === 'owner' && (
-          <TransactionHistoryView />
+        {activeTab === 'history' && (
+          <TransactionHistoryView user={currentUser} />
         )}
         {activeTab === 'excel' && currentUser.role === 'owner' && (
           <ExcelImportView />

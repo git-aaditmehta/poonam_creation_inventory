@@ -8,10 +8,13 @@ import {
   MinusCircle,
   Loader2,
   FileText,
+  Undo2,
 } from 'lucide-react';
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
-import type { Transaction, UnitTotal } from '../types';
+import type { Transaction, UnitTotal, User } from '../types';
+import { undoBlockedReason, UNDO_DAYS } from '../lib/stockUndo';
+import { confirmAndUndo } from './RecentStockOps';
 import { formatIST, istDayStartUtc, istDayEndUtc, todayIST } from '../utils/time';
 import { itemIdSearchSql } from '../utils/itemId';
 import { useToast } from '../context/ToastContext';
@@ -19,8 +22,9 @@ import { errorText } from '../utils/friendlyErrors';
 import { StockPdfModal } from './StockPdfModal';
 import type { GeneratedPdfResult } from '../utils/pdfGenerator';
 
-export const TransactionHistoryView: React.FC = () => {
+export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }) => {
   const { showToast } = useToast();
+  const [undoing, setUndoing] = useState<string | null>(null);
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
@@ -205,7 +209,7 @@ export const TransactionHistoryView: React.FC = () => {
         'Date & time (IST)': formatIST(t.created_at),
         'Category': t.category.replace('_', ' ').toUpperCase(),
         'Item Code': t.item_display_id,
-        'Operation': t.operation === 'add' ? 'STOCK IN' : 'STOCK OUT',
+        'Operation': `${t.operation === 'add' ? 'STOCK IN' : 'STOCK OUT'}${t.reverses_id ? ' (UNDO)' : ''}${t.undone_by ? ` (UNDONE by ${t.undone_by})` : ''}`,
         'Quantity': t.quantity_change,
         'Unit': t.unit,
         'Balance Before': t.quantity_before,
@@ -467,6 +471,7 @@ export const TransactionHistoryView: React.FC = () => {
                 <th>Quantity</th>
                 <th>Balance Progression</th>
                 <th>Performed By</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -495,6 +500,8 @@ export const TransactionHistoryView: React.FC = () => {
                         <MinusCircle size={11} /> SUBTRACT
                       </span>
                     )}
+                    {t.reverses_id && <div><span className="badge" style={{ fontSize: 10, marginTop: 4, background: "rgba(99,102,241,.12)", color: "#4338CA" }}>UNDO of an earlier operation</span></div>}
+                    {t.undone_by && <div><span className="badge badge-rose" style={{ fontSize: 10, marginTop: 4 }}>UNDONE by {t.undone_by}{t.undone_at ? `, ${formatIST(t.undone_at)}` : ''}</span></div>}
                   </td>
                   <td>
                     <span
@@ -515,6 +522,25 @@ export const TransactionHistoryView: React.FC = () => {
                   </td>
                   <td style={{ fontSize: 13 }}>
                     {t.performer_name || t.performed_by}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    {source === 'cloud' && !undoBlockedReason(t, user) && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '4px 10px', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        disabled={undoing !== null}
+                        onClick={async () => {
+                          setUndoing(t.id);
+                          const ok = await confirmAndUndo(t, showToast);
+                          setUndoing(null);
+                          if (ok) fetchHistory();
+                        }}
+                        title={`Undo this operation (possible for ${UNDO_DAYS} days)`}
+                      >
+                        {undoing === t.id ? <Loader2 size={12} className="animate-spin" /> : <Undo2 size={12} />} Undo
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

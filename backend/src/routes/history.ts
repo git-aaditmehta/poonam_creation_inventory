@@ -8,8 +8,8 @@ type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
 const history = new Hono<AppEnv>();
 
-// All history routes are owner-only
-history.use('*', authMiddleware, ownerOnly);
+// Viewing the history: owner and staff (agreed 2026-11-21; it holds no cost prices). Deleting history: owner only.
+history.use('*', authMiddleware);
 
 /** GET /api/history — paginated, filterable transaction history */
 history.get('/', async (c) => {
@@ -56,7 +56,10 @@ history.get('/', async (c) => {
   ).bind(...params).first<{ total: number }>();
 
   const txns = await c.env.DB.prepare(
-    `SELECT * FROM transactions ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    `SELECT t.*,
+       (SELECT r.performer_name FROM transactions r WHERE r.reverses_id = t.id) AS undone_by,
+       (SELECT r.created_at FROM transactions r WHERE r.reverses_id = t.id) AS undone_at
+     FROM transactions t ${whereClause} ORDER BY t.created_at DESC LIMIT ? OFFSET ?`
   ).bind(...params, limit, offset).all();
 
   // Totals PER UNIT for the filtered set (pieces, grams and kg must never be added together)
@@ -100,7 +103,7 @@ history.get('/', async (c) => {
  * new transactions created during the workflow will have IDs outside
  * the boundary and won't be accidentally deleted.
  */
-history.post('/prepare-delete', async (c) => {
+history.post('/prepare-delete', ownerOnly, async (c) => {
   const body = await c.req.json<{ date_from?: string; date_to?: string }>();
   if (!isYmd(body.date_from) || !isYmd(body.date_to)) {
     return c.json({ error: 'Choose a start and an end date (YYYY-MM-DD)' }, 400);
@@ -142,7 +145,7 @@ history.post('/prepare-delete', async (c) => {
  * rowid <= boundary_rowid, ensuring concurrent/new transactions
  * are never touched.
  */
-history.post('/confirm-delete', async (c) => {
+history.post('/confirm-delete', ownerOnly, async (c) => {
   const body = await c.req.json<{
     date_from?: string;
     date_to?: string;

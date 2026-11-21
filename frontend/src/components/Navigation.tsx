@@ -239,6 +239,28 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <span style={{ background: 'rgba(245,158,11,0.2)', color: '#F59E0B', padding: '2px 8px', borderRadius: '9999px', fontSize: 11, fontWeight: 600 }}>{syncStatus?.pendingCount}</span>
               )}
             </button>
+            <button
+              className={`nav-item ${activeTab === 'low-stock' ? 'active' : ''} ${lowStockCount > 0 ? 'has-alert' : ''}`}
+              onClick={() => handleTabClick('low-stock')}
+              title={`Low Stock Alerts (${lowStockCount})`}
+              style={{ display: 'flex', justifyContent: sidebarCollapsed ? 'center' : 'space-between' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <AlertTriangle size={18} color="#F59E0B" />
+                <span>Low Stock Alert</span>
+              </div>
+              {!sidebarCollapsed && lowStockCount > 0 && (
+                <span style={{ background: 'rgba(245,158,11,0.2)', color: '#F59E0B', padding: '2px 8px', borderRadius: '9999px', fontSize: 11, fontWeight: 600 }}>{lowStockCount}</span>
+              )}
+            </button>
+            <button
+              className={`nav-item ${activeTab === 'history' ? 'active' : ''}`}
+              onClick={() => handleTabClick('history')}
+              title="Transaction Audit History"
+            >
+              <History size={18} />
+              <span>Transaction Audit</span>
+            </button>
           </div>
 
           {isOwner && (
@@ -262,28 +284,6 @@ export const Navigation: React.FC<NavigationProps> = ({
                 >
                   <Boxes size={18} />
                   <span>Materials & Categories</span>
-                </button>
-                <button
-                  className={`nav-item ${activeTab === 'low-stock' ? 'active' : ''} ${lowStockCount > 0 ? 'has-alert' : ''}`}
-                  onClick={() => handleTabClick('low-stock')}
-                  title={`Low Stock Alerts (${lowStockCount})`}
-                  style={{ display: 'flex', justifyContent: sidebarCollapsed ? 'center' : 'space-between' }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <AlertTriangle size={18} color="#F59E0B" />
-                    <span>Low Stock Alert</span>
-                  </div>
-                  {!sidebarCollapsed && lowStockCount > 0 && (
-                    <span style={{ background: 'rgba(245,158,11,0.2)', color: '#F59E0B', padding: '2px 8px', borderRadius: '9999px', fontSize: 11, fontWeight: 600 }}>{lowStockCount}</span>
-                  )}
-                </button>
-                <button
-                  className={`nav-item ${activeTab === 'history' ? 'active' : ''}`}
-                  onClick={() => handleTabClick('history')}
-                  title="Transaction Audit History"
-                >
-                  <History size={18} />
-                  <span>Transaction Audit</span>
                 </button>
                 <button
                   className={`nav-item ${activeTab === 'excel' ? 'active' : ''}`}
@@ -559,7 +559,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
         ) : (
           <span className="badge badge-emerald header-role">Staff</span>
         )}
-        {isOwner && lowStockCount > 0 && (
+        {lowStockCount > 0 && (
           <button
             onClick={() => setActiveTab('low-stock')}
             className="badge badge-amber"
