@@ -71,8 +71,17 @@ export interface CostingJewelryRecord {
 
 export type CostingEntity = 'setting' | 'category' | 'material' | 'jewelry';
 
-/** Kundan stone names and prices belong to the inventory (Kundan Stone section) and are not edited in Costing. */
-export const STONE_EDIT_MESSAGE = 'Kundan stone names and prices come from the Kundan Stone section. Change them there.';
+/**
+ * Kundan stones in Costing (agreed 2026-11-22):
+ *  - every stone NAME of the Kundan Stone section is listed automatically (renames there show up here);
+ *  - its COSTING price is set here and saved as a costing material with id "stone:<stone id>". It is NOT the stone's
+ *    cost price in the Kundan Stone section (that one is never used in Costing) and starts empty ("price missing");
+ *  - extra stones can be added here for costing only (ordinary costing materials in kundan_stone); they never
+ *    appear in the Kundan Stone section.
+ */
+export const STONE_NAME_MESSAGE = 'This stone\'s name comes from the Kundan Stone section; rename it there. Its costing price is set here.';
+export const stonePriceId = (stoneId: string) => `stone:${stoneId}`;
+const KUNDAN = 'kundan_stone';
 
 /** Mark a row the owner changed as "needs uploading" (one entry per row, however often it is edited). */
 async function markDirty(entity: CostingEntity, id: string, updatedAt: string): Promise<void> {
@@ -86,6 +95,28 @@ async function markDirty(entity: CostingEntity, id: string, updatedAt: string): 
 
 async function isInventoryStone(id: string): Promise<boolean> {
   return Boolean(await localDb.get<{ id: string }>('SELECT id FROM stones WHERE id = ?', [id]));
+}
+
+/** Costing price of a Kundan Stone section stone (null = not set). Uploaded like any costing material. */
+async function setStoneCostingPrice(stoneId: string, price: number | null): Promise<void> {
+  const stone = await localDb.get<{ item_id: string }>('SELECT item_id FROM stones WHERE id = ?', [stoneId]);
+  if (!stone) throw new Error('This stone no longer exists in the Kundan Stone section.');
+  const id = stonePriceId(stoneId);
+  const now = new Date().toISOString();
+  const value = price !== null && price !== undefined ? roundTo2(price) : null;
+  const existing = await localDb.get<{ created_at: string }>('SELECT created_at FROM costing_materials WHERE id = ?', [id]);
+  await localDb.exec(
+    `INSERT OR REPLACE INTO costing_materials (id, category_id, name, weight, cost_price, is_deleted, created_at, updated_at)
+     VALUES (?, 'kundan_stone', ?, NULL, ?, 0, ?, ?)`,
+    [id, stone.item_id, value, existing?.created_at || now, now]
+  );
+  await markDirty('material', id, now);
+}
+
+/** A stone added in Costing only may not take the name of a stone of the Kundan Stone section. */
+async function assertNotSectionStone(name: string): Promise<void> {
+  const hit = await localDb.get<{ item_id: string }>('SELECT item_id FROM stones WHERE is_deleted = 0 AND LOWER(TRIM(item_id)) = LOWER(TRIM(?))', [name]);
+  if (hit) throw new Error(`"${hit.item_id}" is already listed (it comes from the Kundan Stone section). Set its costing price on that row instead.`);
 }
 
 // ── Multiplier X Settings ────────────────────────────────────────
@@ -122,15 +153,18 @@ export async function getCostingCategories(): Promise<CostingCategory[]> {
   // Compute stats for each category
   const result: CostingCategory[] = [];
   for (const cat of categories) {
-    if (cat.id === 'kundan_stone') {
-      // Reuses stones table
+    if (cat.id === KUNDAN) {
+      // Stones of the Kundan Stone section (their costing price rows) + stones added in Costing only
       const countRow = await localDb.get<{ count: number; sum_cost: number; missing: number }>(`
-        SELECT 
-          COUNT(*) as count,
-          COALESCE(SUM(cost_price), 0) as sum_cost,
-          COALESCE(SUM(CASE WHEN cost_price IS NULL OR cost_price = 0 THEN 1 ELSE 0 END), 0) as missing
-        FROM stones
-        WHERE is_deleted = 0
+        SELECT COUNT(*) AS count, COALESCE(SUM(price), 0) AS sum_cost, COALESCE(SUM(CASE WHEN price IS NULL THEN 1 ELSE 0 END), 0) AS missing
+        FROM (
+          SELECT m.cost_price AS price FROM stones s
+            LEFT JOIN costing_materials m ON m.id = 'stone:' || s.id AND m.is_deleted = 0
+            WHERE s.is_deleted = 0
+          UNION ALL
+          SELECT cost_price AS price FROM costing_materials
+            WHERE category_id = 'kundan_stone' AND is_deleted = 0 AND id NOT LIKE 'stone:%'
+        )
       `);
       result.push({
         ...cat,
@@ -278,28 +312,26 @@ export async function getCostingMaterialsByCategory(
 ): Promise<CostingMaterial[]> {
   await localDb.ready;
 
-  if (categoryId === 'kundan_stone') {
-    // Reuse existing stones table from inventory
-    let sql = 'SELECT id, item_id as name, cost_price FROM stones WHERE is_deleted = 0';
-    const params: any[] = [];
-    if (search && search.trim()) {
-      sql += ' AND item_id LIKE ?';
-      params.push(`%${search.trim()}%`);
-    }
-    sql += ' ORDER BY item_id ASC';
-
-    const rows = await localDb.query<any>(sql, params);
-    return rows.map((r) => ({
-      id: r.id,
-      category_id: 'kundan_stone',
-      name: r.name,
-      weight: null,
-      cost_price: (r.cost_price !== null && r.cost_price !== undefined) ? Number(r.cost_price) : null,
-      is_deleted: 0,
-      created_at: '',
-      updated_at: '',
-      is_inventory_stone: true,
-    }));
+  if (categoryId === KUNDAN) {
+    const q = search && search.trim() ? `%${search.trim()}%` : null;
+    const fromSection = await localDb.query<any>(
+      `SELECT s.id, s.item_id AS name, m.cost_price, m.created_at, m.updated_at
+       FROM stones s LEFT JOIN costing_materials m ON m.id = 'stone:' || s.id AND m.is_deleted = 0
+       WHERE s.is_deleted = 0${q ? ' AND s.item_id LIKE ?' : ''}`,
+      q ? [q] : [],
+    );
+    const own = await localDb.query<any>(
+      `SELECT * FROM costing_materials WHERE category_id = 'kundan_stone' AND is_deleted = 0 AND id NOT LIKE 'stone:%'${q ? ' AND name LIKE ?' : ''}`,
+      q ? [q] : [],
+    );
+    const num = (v: unknown) => (v !== null && v !== undefined ? Number(v) : null);
+    return [
+      ...fromSection.map((r) => ({
+        id: r.id, category_id: KUNDAN, name: r.name, weight: null, cost_price: num(r.cost_price),
+        is_deleted: 0, created_at: r.created_at || '', updated_at: r.updated_at || '', is_inventory_stone: true,
+      })),
+      ...own.map((r) => ({ ...r, weight: null, cost_price: num(r.cost_price), is_inventory_stone: false })),
+    ].sort((x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true }));
   }
 
   let sql = 'SELECT * FROM costing_materials WHERE category_id = ? AND is_deleted = 0';
@@ -324,8 +356,8 @@ export async function addCostingMaterial(params: {
   weight?: number | null;
   cost_price?: number | null;
 }): Promise<CostingMaterial> {
-  if (params.category_id === 'kundan_stone') throw new Error(STONE_EDIT_MESSAGE);
   await localDb.ready;
+  if (params.category_id === KUNDAN) await assertNotSectionStone(params.name);
   const now = new Date().toISOString();
   const id = `mat_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -344,7 +376,7 @@ export async function addCostingMaterial(params: {
     }
   } else {
     const existing = await localDb.get<CostingMaterial>(
-      'SELECT id FROM costing_materials WHERE category_id = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?)',
+      "SELECT id FROM costing_materials WHERE category_id = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?) AND id NOT LIKE 'stone:%'",
       [params.category_id, name]
     );
     if (existing) {
@@ -382,8 +414,18 @@ export async function upsertCostingMaterial(params: {
   weight?: number | null;
   cost_price?: number | null;
 }): Promise<{ material: CostingMaterial; wasUpdated: boolean }> {
-  if (params.category_id === 'kundan_stone') throw new Error(STONE_EDIT_MESSAGE);
   await localDb.ready;
+  if (params.category_id === KUNDAN) {
+    // A stone of the Kundan Stone section: only its costing price is set
+    const stone = await localDb.get<{ id: string }>('SELECT id FROM stones WHERE is_deleted = 0 AND LOWER(TRIM(item_id)) = LOWER(TRIM(?))', [params.name]);
+    if (stone) {
+      const price = params.cost_price !== undefined && params.cost_price !== null ? roundTo2(params.cost_price) : null;
+      const had = await localDb.get<{ id: string }>('SELECT id FROM costing_materials WHERE id = ? AND is_deleted = 0', [stonePriceId(stone.id)]);
+      await setStoneCostingPrice(stone.id, price);
+      const material = (await getCostingMaterialsByCategory(KUNDAN)).find((m) => m.id === stone.id)!;
+      return { material, wasUpdated: Boolean(had) };
+    }
+  }
   const now = new Date().toISOString();
   const name = params.name.trim();
   const weight = params.weight !== undefined && params.weight !== null ? roundTo2(params.weight) : null;
@@ -450,14 +492,17 @@ export async function updateCostingMaterial(
   await localDb.ready;
   const now = new Date().toISOString();
 
-  // Kundan stones are inventory items: changed only in the Kundan Stone section (this used to change only this
-  // device's copy, which the next sync overwrote)
-  if (await isInventoryStone(id)) throw new Error(STONE_EDIT_MESSAGE);
+  // A stone of the Kundan Stone section: its name stays the section's; only the costing price is set here
+  if (await isInventoryStone(id)) {
+    if (updates.cost_price !== undefined) await setStoneCostingPrice(id, updates.cost_price);
+    return;
+  }
 
   const existing = await localDb.get<CostingMaterial>('SELECT * FROM costing_materials WHERE id = ?', [id]);
   if (!existing) throw new Error('Material not found');
 
   const newName = updates.name !== undefined ? updates.name.trim() : existing.name;
+  if (existing.category_id === KUNDAN && newName.toLowerCase() !== String(existing.name).toLowerCase()) await assertNotSectionStone(newName);
   const newWeight = updates.weight !== undefined ? (updates.weight !== null ? roundTo2(updates.weight) : null) : existing.weight;
   const newPrice = updates.cost_price !== undefined ? (updates.cost_price !== null ? roundTo2(updates.cost_price) : null) : existing.cost_price;
 
@@ -534,12 +579,15 @@ export async function propagateMaterialCostPrice(
   const now = new Date().toISOString();
 
   // 1. Update the master record (the only thing uploaded; the per-design updates below are derived)
-  if (await isInventoryStone(materialId)) throw new Error(STONE_EDIT_MESSAGE);
-  await localDb.exec(
-    'UPDATE costing_materials SET cost_price = ?, updated_at = ? WHERE id = ?',
-    [price, now, materialId]
-  );
-  await markDirty('material', materialId, now);
+  if (await isInventoryStone(materialId)) {
+    await setStoneCostingPrice(materialId, price); // design lines keep the stone's id as material_id
+  } else {
+    await localDb.exec(
+      'UPDATE costing_materials SET cost_price = ?, updated_at = ? WHERE id = ?',
+      [price, now, materialId]
+    );
+    await markDirty('material', materialId, now);
+  }
 
   // 2. Find all affected jewelry_costing_materials
   const affectedRows = await localDb.query<CostingJewelryMaterialRow>(
@@ -633,15 +681,14 @@ async function buildLivePriceMap(): Promise<Map<string, number>> {
       map.set(rm.id, Number(rm.cost_price));
       map.set(`${rm.category_id}::${String(rm.name).toLowerCase().trim()}`, Number(rm.cost_price));
     }
-    const stones = await localDb.query<any>('SELECT id, item_id, cost_price, cost_price_cents FROM stones WHERE is_deleted = 0');
+    // Kundan stones of the section: their COSTING price (set in Costing), by stone id and by its current name
+    const stones = await localDb.query<any>(
+      `SELECT s.id, s.item_id, m.cost_price FROM stones s JOIN costing_materials m ON m.id = 'stone:' || s.id
+       WHERE s.is_deleted = 0 AND m.is_deleted = 0 AND m.cost_price IS NOT NULL`
+    );
     for (const sm of stones) {
-      const price = sm.cost_price !== null && sm.cost_price !== undefined && sm.cost_price > 0
-        ? Number(sm.cost_price)
-        : (sm.cost_price_cents ? sm.cost_price_cents / 100 : null);
-      if (price !== null) {
-        map.set(sm.id, price);
-        map.set(`kundan_stone::${String(sm.item_id).toLowerCase().trim()}`, price);
-      }
+      map.set(sm.id, Number(sm.cost_price));
+      map.set(`kundan_stone::${String(sm.item_id).toLowerCase().trim()}`, Number(sm.cost_price));
     }
   } catch {
     // Non-fatal: lines then show as "price missing"

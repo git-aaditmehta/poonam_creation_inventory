@@ -88,7 +88,9 @@ function validate(c: any, nowIso: string): Clean | string {
     }
     case 'material': {
       if (typeof d.category_id !== 'string' || !ID_RE.test(d.category_id)) return 'invalid category';
-      if (d.category_id === 'kundan_stone') return 'Kundan stones come from the Kundan Stone section, not from Costing';
+      // Kundan stones (2026-11-22): "stone:<id>" = the costing price of a Kundan Stone section stone; other ids in
+      // kundan_stone = stones added in Costing only. A stone price entry always belongs to kundan_stone.
+      if (c.id.startsWith('stone:') && d.category_id !== 'kundan_stone') return 'a Kundan stone price must be in the Kundan Stone category';
       if (!str(d.name, 1, 120)) return 'material name must be 1-120 characters';
       if (!numOrNull(d.weight, 0, 1e6)) return 'invalid weight';
       if (!numOrNull(d.cost_price, 0, 1e9)) return 'invalid cost price';
@@ -235,10 +237,11 @@ costing.post('/push', async (c) => {
         applied.push({ entity: v.entity, id: v.id }); // nothing (left) to delete
         continue;
       }
-    } else if (v.entity === 'material') {
-      // The same material (category + name, capitals ignored) must exist only once
+    } else if (v.entity === 'material' && !v.id.startsWith('stone:')) {
+      // The same material (category + name, capitals ignored) must exist only once. Kundan stone price entries are
+      // tied to their stone (not to a name), so they are left out of this rule.
       const dup = await c.env.DB.prepare(
-        `SELECT * FROM costing_materials WHERE category_id = ? AND LOWER(name) = LOWER(?) AND deleted = 0 AND id != ? LIMIT 1`
+        `SELECT * FROM costing_materials WHERE category_id = ? AND LOWER(name) = LOWER(?) AND deleted = 0 AND id != ? AND id NOT LIKE 'stone:%' LIMIT 1`
       ).bind(v.row.category_id, v.row.name, v.id).first<any>();
       if (dup) {
         if (!cur) {

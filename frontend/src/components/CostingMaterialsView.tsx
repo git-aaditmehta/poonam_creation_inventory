@@ -368,7 +368,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
 
   const handleDeleteMaterial = async (mat: CostingMaterial) => {
     if (mat.is_inventory_stone) {
-      showToast('info', 'Inventory Stone', 'Kundan Stones are managed through the Kundan Stone inventory screen.');
+      showToast('info', 'Comes from the Kundan Stone section', 'This stone is listed from the Kundan Stone section, so it can\'t be removed here. You can clear its costing price instead.');
       return;
     }
 
@@ -614,7 +614,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                     />
                   </div>
 
-                  {!isKundanStone && (
+                  {(
                     <button
                       onClick={() => {
                         setMaterialNameInput('');
@@ -625,7 +625,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                       className="btn btn-primary"
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', fontSize: 13 }}
                     >
-                      <Plus size={15} /> Add Material
+                      <Plus size={15} /> {isKundanStone ? 'Add stone (costing only)' : 'Add Material'}
                     </button>
                   )}
                 </div>
@@ -650,8 +650,9 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                 >
                   <Sparkles size={16} color="var(--teal-deep)" style={{ flexShrink: 0 }} />
                   <span style={{ flex: '1 1 200px' }}>
-                    Kundan stone names and prices come from the <strong>Kundan Stone</strong> section and update here (and in every
-                    design that uses them) automatically. To change one, edit it there.
+                    Stone <strong>names</strong> marked <em>From Kundan section</em> come from the Kundan Stone section automatically.
+                    Their <strong>costing price is set here</strong> (tap ✎) and is separate from the stone's cost price in the Kundan
+                    Stone section. You can also add stones for costing only; they don't appear in the Kundan Stone section.
                   </span>
                   {onOpenKundanStones && (
                     <button type="button" className="btn btn-secondary" style={{ fontSize: 12, padding: '5px 10px', whiteSpace: 'nowrap' }} onClick={onOpenKundanStones}>
@@ -712,6 +713,13 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                           >
                             <td style={{ padding: '12px 14px', fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
                               {isHepoxy ? (mat.weight !== null ? mat.weight.toFixed(2) : mat.name) : mat.name}
+                              {isKundanStone && (
+                                <div>
+                                  <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 999, background: mat.is_inventory_stone ? 'var(--teal-faint)' : 'rgba(212,175,55,.15)', color: mat.is_inventory_stone ? 'var(--teal-deep)' : '#92400E' }}>
+                                    {mat.is_inventory_stone ? 'From Kundan section' : 'Costing only'}
+                                  </span>
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: '12px 14px' }}>
                               {hasMissingPrice ? (
@@ -739,7 +747,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                             </td>
                             <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                               <div style={{ display: 'inline-flex', gap: 6 }}>
-                                {!mat.is_inventory_stone && (
+                                {(
                                   <button
                                     onClick={() => openEditMaterialModal(mat)}
                                     className="btn-icon"
