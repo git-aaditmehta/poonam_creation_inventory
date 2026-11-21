@@ -27,6 +27,9 @@ import {
   canDeleteCostingMaterial,
   deleteCostingMaterial,
   propagateMaterialCostPrice,
+  hideStoneFromCosting,
+  restoreStoneToCosting,
+  getHiddenStones,
   type CostingCategory,
   type CostingMaterial,
 } from '../lib/costingDb';
@@ -54,6 +57,19 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
 
   const [categories, setCategories] = useState<CostingCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<CostingCategory | null>(null);
+  // Kundan Stone section stones deleted (hidden) from Costing, with Restore
+  const [hiddenStones, setHiddenStones] = useState<{ id: string; name: string }[]>([]);
+  const [showHidden, setShowHidden] = useState(false);
+  const fetchHiddenStones = useCallback(async () => {
+    try {
+      setHiddenStones(await getHiddenStones());
+    } catch {
+      setHiddenStones([]);
+    }
+  }, []);
+  useEffect(() => {
+    if (selectedCategory?.id === 'kundan_stone') fetchHiddenStones();
+  }, [selectedCategory?.id, fetchHiddenStones]);
   const [materials, setMaterials] = useState<CostingMaterial[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -368,7 +384,18 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
 
   const handleDeleteMaterial = async (mat: CostingMaterial) => {
     if (mat.is_inventory_stone) {
-      showToast('info', 'Comes from the Kundan Stone section', 'This stone is listed from the Kundan Stone section, so it can\'t be removed here. You can clear its costing price instead.');
+      // Only hidden from Costing: the stone stays in the Kundan Stone section
+      if (!confirm(`Delete "${mat.name}" from Costing?\n\nIt stays in the Kundan Stone section. You can bring it back later under "Deleted from Costing".`)) return;
+      try {
+        await hideStoneFromCosting(mat.id);
+        showToast('success', 'Deleted from Costing', `${mat.name} no longer appears in Costing. It is still in the Kundan Stone section.`);
+        await fetchMaterials();
+        await fetchCategories();
+        await fetchHiddenStones();
+        onMaterialsChanged?.();
+      } catch (err: any) {
+        showToast('error', 'Not deleted', errorText(err));
+      }
       return;
     }
 
@@ -652,7 +679,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   <span style={{ flex: '1 1 200px' }}>
                     Stone <strong>names</strong> marked <em>From Kundan section</em> come from the Kundan Stone section automatically.
                     Their <strong>costing price is set here</strong> (tap ✎) and is separate from the stone's cost price in the Kundan
-                    Stone section. You can also add stones for costing only; they don't appear in the Kundan Stone section.
+                    Stone section. You can also add stones for costing only; they don't appear in the Kundan Stone section. Deleting a stone here only removes it from Costing.
                   </span>
                   {onOpenKundanStones && (
                     <button type="button" className="btn btn-secondary" style={{ fontSize: 12, padding: '5px 10px', whiteSpace: 'nowrap' }} onClick={onOpenKundanStones}>
@@ -757,7 +784,7 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                                     <Edit2 size={14} />
                                   </button>
                                 )}
-                                {!mat.is_inventory_stone && (
+                                {(
                                   <button
                                     onClick={() => handleDeleteMaterial(mat)}
                                     className="btn-icon danger"
@@ -776,6 +803,37 @@ export const CostingMaterialsView: React.FC<CostingMaterialsViewProps> = ({
                   </tbody>
                 </table>
               </div>
+              {isKundanStone && hiddenStones.length > 0 && (
+                <div style={{ marginTop: 12, border: '1px dashed var(--border-medium)', borderRadius: 'var(--radius-md)', padding: '8px 12px', fontSize: 13 }}>
+                  <button type="button" onClick={() => setShowHidden((v) => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)', padding: 0 }}>
+                    {showHidden ? '▾' : '▸'} Deleted from Costing ({hiddenStones.length}) — still in the Kundan Stone section
+                  </button>
+                  {showHidden && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                      {hiddenStones.map((h) => (
+                        <div key={h.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                          <span className="mono">{h.name}</span>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{ padding: '3px 10px', fontSize: 12 }}
+                            onClick={async () => {
+                              await restoreStoneToCosting(h.id);
+                              showToast('success', 'Back in Costing', `${h.name} appears in Costing again, with its costing price.`);
+                              await fetchMaterials();
+                              await fetchCategories();
+                              await fetchHiddenStones();
+                              onMaterialsChanged?.();
+                            }}
+                          >
+                            Restore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)' }}>

@@ -26,7 +26,7 @@ const TABLE: Record<Entity, { table: string; key: string }> = {
   jewelry: { table: 'costing_jewelry', key: 'id' },
 };
 const SYSTEM_CATEGORY_IDS = new Set(['ad_stone', 'kundan_stone', 'mop', 'hepoxy']);
-const SETTING_KEYS = new Set(['multiplier_x']);
+const SETTING_KEYS = new Set(['multiplier_x', 'kundan_hidden']);
 const MAX_PUSH = 200;
 const PULL_LIMIT = 2000;
 const MAX_LINES = 300;
@@ -73,6 +73,18 @@ function validate(c: any, nowIso: string): Clean | string {
   switch (entity) {
     case 'setting': {
       if (!SETTING_KEYS.has(c.id)) return 'unknown setting';
+      if (c.id === 'kundan_hidden') {
+        // Kundan Stone section stones hidden from Costing (2026-11-22): a JSON list of stone ids
+        if (typeof d.value !== 'string' || d.value.length > 60000) return 'invalid hidden-stone list';
+        let ids: unknown;
+        try {
+          ids = JSON.parse(d.value);
+        } catch {
+          return 'invalid hidden-stone list';
+        }
+        if (!Array.isArray(ids) || ids.length > 2000 || !ids.every((x) => typeof x === 'string' && ID_RE.test(x))) return 'invalid hidden-stone list';
+        return { entity, id: c.id, updated_at, deleted, row: { value: JSON.stringify(ids) } };
+      }
       const v = typeof d.value === 'string' ? Number(d.value) : d.value;
       if (!isNum(v, 0, 10000)) return 'multiplier X must be a number between 0 and 10000';
       return { entity, id: c.id, updated_at, deleted, row: { value: (v as number).toFixed(2) } };

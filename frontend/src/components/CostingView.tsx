@@ -9,6 +9,7 @@ import {
   Download,
   FileText,
   Loader2,
+  Boxes,
   AlertTriangle,
   X,
   AlertCircle,
@@ -593,6 +594,16 @@ export const CostingView: React.FC<CostingViewProps> = ({
 
           {/* Excel and PDF of the costing */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {onNavigateToMaterials && (
+              <button
+                onClick={onNavigateToMaterials}
+                className="btn btn-secondary"
+                title="Go to Raw Materials & Categories"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', fontSize: 13 }}
+              >
+                <Boxes size={14} /> Materials & Categories
+              </button>
+            )}
             <button
               onClick={onExportJewelryExcel || handleExportJewelryExcel}
               className="btn btn-secondary"

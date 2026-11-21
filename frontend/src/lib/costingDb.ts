@@ -113,9 +113,58 @@ async function setStoneCostingPrice(stoneId: string, price: number | null): Prom
   await markDirty('material', id, now);
 }
 
+/**
+ * Kundan Stone section stones hidden from Costing (agreed 2026-11-22): "Delete" on such a stone in Costing only hides
+ * it here; it stays in the Kundan Stone section. Kept as a Costing setting (synced like X); its costing price is kept,
+ * so restoring brings it back as it was.
+ */
+const HIDDEN_KEY = 'kundan_hidden';
+export async function getHiddenStoneIds(): Promise<string[]> {
+  const row = await localDb.get<{ value: string }>('SELECT value FROM costing_settings WHERE key = ?', [HIDDEN_KEY]);
+  try {
+    const v = JSON.parse(row?.value || '[]');
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+async function saveHiddenStoneIds(ids: string[]): Promise<void> {
+  const now = new Date().toISOString();
+  await localDb.exec('INSERT OR REPLACE INTO costing_settings (key, value, updated_at) VALUES (?, ?, ?)', [HIDDEN_KEY, JSON.stringify([...new Set(ids)]), now]);
+  await markDirty('setting', HIDDEN_KEY, now);
+}
+/** Hide a Kundan Stone section stone from Costing (refused while a design uses it). */
+export async function hideStoneFromCosting(stoneId: string): Promise<void> {
+  await localDb.ready;
+  const stone = await localDb.get<{ item_id: string }>('SELECT item_id FROM stones WHERE id = ?', [stoneId]);
+  if (!stone) throw new Error('This stone no longer exists in the Kundan Stone section.');
+  const used = await canDeleteCostingMaterial(stoneId);
+  if (!used.canDelete) {
+    throw new Error(`"${stone.item_id}" is used in ${used.jewelryCount} costed design(s). Remove it from those designs first, then delete it here.`);
+  }
+  await saveHiddenStoneIds([...(await getHiddenStoneIds()), stoneId]);
+}
+export async function restoreStoneToCosting(stoneId: string): Promise<void> {
+  await localDb.ready;
+  await saveHiddenStoneIds((await getHiddenStoneIds()).filter((id) => id !== stoneId));
+}
+/** Section stones currently hidden from Costing (name from the Kundan Stone section). */
+export async function getHiddenStones(): Promise<{ id: string; name: string }[]> {
+  await localDb.ready;
+  const ids = await getHiddenStoneIds();
+  if (!ids.length) return [];
+  return localDb.query<{ id: string; name: string }>(
+    'SELECT id, item_id AS name FROM stones WHERE is_deleted = 0 AND id IN (SELECT value FROM json_each(?)) ORDER BY item_id',
+    [JSON.stringify(ids)],
+  );
+}
+
 /** A stone added in Costing only may not take the name of a stone of the Kundan Stone section. */
 async function assertNotSectionStone(name: string): Promise<void> {
-  const hit = await localDb.get<{ item_id: string }>('SELECT item_id FROM stones WHERE is_deleted = 0 AND LOWER(TRIM(item_id)) = LOWER(TRIM(?))', [name]);
+  const hit = await localDb.get<{ id: string; item_id: string }>('SELECT id, item_id FROM stones WHERE is_deleted = 0 AND LOWER(TRIM(item_id)) = LOWER(TRIM(?))', [name]);
+  if (hit && (await getHiddenStoneIds()).includes(hit.id)) {
+    throw new Error(`"${hit.item_id}" comes from the Kundan Stone section and was deleted from Costing. Bring it back under "Deleted from Costing" below the list.`);
+  }
   if (hit) throw new Error(`"${hit.item_id}" is already listed (it comes from the Kundan Stone section). Set its costing price on that row instead.`);
 }
 
@@ -160,12 +209,12 @@ export async function getCostingCategories(): Promise<CostingCategory[]> {
         FROM (
           SELECT m.cost_price AS price FROM stones s
             LEFT JOIN costing_materials m ON m.id = 'stone:' || s.id AND m.is_deleted = 0
-            WHERE s.is_deleted = 0
+            WHERE s.is_deleted = 0 AND s.id NOT IN (SELECT value FROM json_each(?))
           UNION ALL
           SELECT cost_price AS price FROM costing_materials
             WHERE category_id = 'kundan_stone' AND is_deleted = 0 AND id NOT LIKE 'stone:%'
         )
-      `);
+      `, [JSON.stringify(await getHiddenStoneIds())]);
       result.push({
         ...cat,
         material_count: countRow?.count ?? 0,
@@ -317,8 +366,8 @@ export async function getCostingMaterialsByCategory(
     const fromSection = await localDb.query<any>(
       `SELECT s.id, s.item_id AS name, m.cost_price, m.created_at, m.updated_at
        FROM stones s LEFT JOIN costing_materials m ON m.id = 'stone:' || s.id AND m.is_deleted = 0
-       WHERE s.is_deleted = 0${q ? ' AND s.item_id LIKE ?' : ''}`,
-      q ? [q] : [],
+       WHERE s.is_deleted = 0 AND s.id NOT IN (SELECT value FROM json_each(?))${q ? ' AND s.item_id LIKE ?' : ''}`,
+      [JSON.stringify(await getHiddenStoneIds()), ...(q ? [q] : [])],
     );
     const own = await localDb.query<any>(
       `SELECT * FROM costing_materials WHERE category_id = 'kundan_stone' AND is_deleted = 0 AND id NOT LIKE 'stone:%'${q ? ' AND name LIKE ?' : ''}`,
