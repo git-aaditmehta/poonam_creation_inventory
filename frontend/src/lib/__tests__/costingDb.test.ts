@@ -243,11 +243,11 @@ describe('costingDb - Local Database Access Layer', () => {
       expect(mopList[0].cost_price).toBeNull();
     });
 
-    it('queries Kundan Stone directly from stones inventory table without duplicates', async () => {
+    it('lists the Kundan Stone section stones by name, with their own (empty) costing price', async () => {
       const list = await getCostingMaterialsByCategory('kundan_stone');
       expect(list.length).toBe(1);
       expect(list[0].name).toBe('KUNDAN-A');
-      expect(list[0].cost_price).toBe(4.00);
+      expect(list[0].cost_price).toBeNull(); // the stone's inventory cost price (4) is NOT used in Costing (2026-11-22)
       expect(list[0].is_inventory_stone).toBe(true);
     });
   });
@@ -396,23 +396,33 @@ describe('costingDb - Local Database Access Layer', () => {
       expect(rec?.cached_total_cost).toBe(25 * 1 + 3 * 4);
     });
 
-    it('Kundan stones are read-only in Costing (edited only in the Kundan Stone section)', async () => {
-      await expect(updateCostingMaterial('stone_1', { cost_price: 9 })).rejects.toThrow(/Kundan Stone section/);
-      await expect(propagateMaterialCostPrice('stone_1', 9)).rejects.toThrow(/Kundan Stone section/);
-      const st = db.prepare('SELECT cost_price FROM stones WHERE id = ?').get('stone_1') as any;
-      expect(st.cost_price).toBe(4);
-      await expect(addCostingMaterial({ category_id: 'kundan_stone', name: 'KUNDAN-Z', cost_price: 1 })).rejects.toThrow(/Kundan Stone section/);
-      await expect(upsertCostingMaterial({ category_id: 'kundan_stone', name: 'KUNDAN-A', cost_price: 1 })).rejects.toThrow(/Kundan Stone section/);
-      expect(dirty().length).toBe(0);
+    it('Kundan stones: costing price set in Costing (inventory untouched); costing-only stones allowed', async () => {
+      await updateCostingMaterial('stone_1', { name: 'RENAMED', cost_price: 9 });
+      let list = await getCostingMaterialsByCategory('kundan_stone');
+      expect(list[0]).toMatchObject({ id: 'stone_1', name: 'KUNDAN-A', cost_price: 9, is_inventory_stone: true }); // name stays the section's
+      const st = db.prepare('SELECT cost_price, item_id FROM stones WHERE id = ?').get('stone_1') as any;
+      expect(st).toMatchObject({ cost_price: 4, item_id: 'KUNDAN-A' }); // the Kundan Stone section is never changed
+      await propagateMaterialCostPrice('stone_1', 6);
+      expect((await getCostingMaterialsByCategory('kundan_stone'))[0].cost_price).toBe(6);
+      const own = await addCostingMaterial({ category_id: 'kundan_stone', name: 'MIRROR-1', cost_price: 1.5 });
+      list = await getCostingMaterialsByCategory('kundan_stone');
+      expect(list.map((m) => [m.name, m.cost_price, m.is_inventory_stone])).toEqual([['KUNDAN-A', 6, true], ['MIRROR-1', 1.5, false]]);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM stones WHERE item_id = 'MIRROR-1'").get()).toMatchObject({ n: 0 }); // not in the section
+      await expect(addCostingMaterial({ category_id: 'kundan_stone', name: 'kundan-a', cost_price: 1 })).rejects.toThrow(/already listed/);
+      expect(dirty().map((d: any) => d.id).sort()).toEqual([own.id, 'stone:stone_1'].sort()); // both uploaded
     });
 
-    it('designs follow the CURRENT inventory stone price', async () => {
-      const j = await saveJewelryCosting({ plated_jewelry_id: 'pj_2', weight: 1, materials: [{ categoryId: 'kundan_stone', materialId: 'stone_1', materialName: 'KUNDAN-A', quantity: 2, unitCost: 4 }] });
-      expect((await getJewelryCostingById(j.id))?.cached_total_cost).toBe(18 + 8);
-      db.exec("UPDATE stones SET cost_price = 5, cost_price_cents = 500 WHERE id = 'stone_1'"); // changed in the inventory
-      expect((await getJewelryCostingById(j.id))?.cached_total_cost).toBe(18 + 10);
+    it('designs use the stone COSTING price, never the inventory cost price', async () => {
+      const j = await saveJewelryCosting({ plated_jewelry_id: 'pj_2', weight: 1, materials: [{ categoryId: 'kundan_stone', materialId: 'stone_1', materialName: 'KUNDAN-A', quantity: 2, unitCost: null as any }] });
+      let rec = await getJewelryCostingById(j.id);
+      expect(rec?.calculated?.missingPriceMaterials).toContain('KUNDAN-A'); // no costing price yet
+      await updateCostingMaterial('stone_1', { cost_price: 5 });
+      expect((await getJewelryCostingById(j.id))?.calculated?.totalCost).toBe(18 + 10);
+      db.exec("UPDATE stones SET cost_price = 50, cost_price_cents = 5000 WHERE id = 'stone_1'"); // inventory price changes: no effect
+      rec = await getJewelryCostingById(j.id);
+      expect(rec?.calculated?.totalCost).toBe(18 + 10);
       const all = await getAllJewelryCostings();
-      expect(all.find((x) => x.id === j.id)?.cached_total_cost).toBe(18 + 10);
+      expect(all.find((x) => x.id === j.id)?.calculated?.totalCost).toBe(18 + 10);
     });
 
     it('a deleted material shows as "price missing", not an old price', async () => {
