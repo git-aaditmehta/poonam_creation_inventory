@@ -7,6 +7,7 @@
  * current prices and are never uploaded (keeps cloud writes tiny).
  */
 
+import { compareStoneNames } from '../utils/itemOrder';
 import { localDb } from './localDb';
 import {
   calculateJewelryCost,
@@ -380,7 +381,7 @@ export async function getCostingMaterialsByCategory(
         is_deleted: 0, created_at: r.created_at || '', updated_at: r.updated_at || '', is_inventory_stone: true,
       })),
       ...own.map((r) => ({ ...r, weight: null, cost_price: num(r.cost_price), is_inventory_stone: false })),
-    ].sort((x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true }));
+    ].sort((x, y) => compareStoneNames(String(x.name), String(y.name))); // same order as the Kundan Stone section
   }
 
   let sql = 'SELECT * FROM costing_materials WHERE category_id = ? AND is_deleted = 0';

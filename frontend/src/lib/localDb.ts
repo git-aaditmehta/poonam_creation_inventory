@@ -10,6 +10,7 @@
  *   const rows = await localDb.query('SELECT * FROM stones WHERE item_id LIKE ?', ['%KD%']);
  */
 import { jewelryCategoryCaseSql } from '../utils/jewelryCategory';
+import { sortInventory } from '../utils/itemOrder';
 import { isLowStock, LOW_STOCK_SQL } from '../utils/lowStock';
 import { itemIdSearchSql } from '../utils/itemId';
 
@@ -158,7 +159,8 @@ class LocalSqlite {
         `SELECT * FROM ${table} WHERE is_deleted = 0 ORDER BY item_id ASC`
       );
     }
-    return rows.map((r) => this.normalizeItem<T>(r));
+    // Display order (utils/itemOrder.ts): by type and number for jewelry, the client's order for stones, weight for foil
+    return sortInventory(table, rows.map((r) => this.normalizeItem<any>(r))) as T[];
   }
 
   /**
@@ -188,14 +190,11 @@ class LocalSqlite {
       params.push(...filter.params);
     }
 
-    const countRow: any = await this.get(`SELECT COUNT(*) as total FROM ${table} ${where}`, params);
-    const rows: any[] = await this.query<T>(
-      `SELECT * FROM ${table} ${where} ORDER BY item_id ASC LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
-    );
-
-    const items = rows.map((r) => this.normalizeItem<T>(r));
-    const total = countRow?.total ?? 0;
+    // All matching rows are put in display order (utils/itemOrder.ts), then the page is cut, so every page follows it
+    const all: any[] = await this.query<T>(`SELECT * FROM ${table} ${where}`, params);
+    const sorted = sortInventory(table, all.map((r) => this.normalizeItem<any>(r)));
+    const items = sorted.slice(offset, offset + limit) as T[];
+    const total = sorted.length;
     return {
       items,
       total,
