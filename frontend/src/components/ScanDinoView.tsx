@@ -52,7 +52,9 @@ import {
 import { generateScanTestReport } from '../utils/scanReportPdf';
 import { DINO_MODEL_BYTES, DINO_MODEL_VERSION, DINO_SCAN_BOX_INSET } from '../lib/dino/config';
 import { embedImage, embedPixels, loadCatalogBitmap, loadDino, type DinoLoadInfo } from '../lib/dino/dinoClient';
-import { prepareCatalogInput, NO_JEWELRY_ADVICE } from '../lib/dino/catalogCrop';
+import { prepareCatalogInput, NO_JEWELRY_ADVICE, prepareGalleryPhoto } from '../lib/dino/catalogCrop';
+import type { CropBox } from '../lib/dino/catalogCropCore';
+import { GalleryBoxPicker } from './GalleryBoxPicker';
 
 interface ScanDinoViewProps {
   user: User;
@@ -346,7 +348,13 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     return { sx: Math.floor((srcW - side) / 2) + inset, sy: Math.floor((srcH - side) / 2) + inset, sw: box, sh: box };
   };
 
-  const performSearch = async (source: HTMLVideoElement | HTMLImageElement, srcW: number, srcH: number, from: 'camera' | 'gallery') => {
+  const performSearch = async (
+    source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+    srcW: number,
+    srcH: number,
+    from: 'camera' | 'gallery',
+    cropOverride?: { sx: number; sy: number; sw: number; sh: number },
+  ) => {
     if (!isOnline) {
       showToast('error', 'Offline', 'Search needs an internet connection.');
       return;
@@ -356,7 +364,7 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
       return;
     }
     const tTap = performance.now();
-    const crop = cropRect(srcW, srcH, from === 'camera');
+    const crop = cropOverride ?? cropRect(srcW, srcH, from === 'camera');
 
     // Small preview for the screen only (freed right after; iOS has a hard canvas-memory limit)
     const pScale = Math.min(1, PREVIEW_MAX / Math.max(crop.sw, crop.sh));
@@ -465,22 +473,32 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
     performSearch(video, video.videoWidth, video.videoHeight, 'camera');
   };
 
+  // Gallery photo (agreed 2026-11-21): cleaned like a catalog photo, the piece found automatically, then the user
+  // adjusts the gold box and taps Identify; only the inside of the box is searched.
+  const [galleryPick, setGalleryPick] = useState<{ canvas: HTMLCanvasElement; autoBox: CropBox | null } | null>(null);
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      showToast('error', 'Invalid file', 'Please select an image (JPEG, PNG, WebP).');
+      showToast('error', 'Not a photo', 'Please choose a photo (JPEG, PNG or WebP).');
       return;
     }
     const url = URL.createObjectURL(file);
     const el = new Image();
     el.onload = () => {
-      performSearch(el, el.naturalWidth, el.naturalHeight, 'gallery').finally(() => URL.revokeObjectURL(url));
+      try {
+        const prepared = prepareGalleryPhoto(el, el.naturalWidth, el.naturalHeight);
+        setGalleryPick({ canvas: prepared.canvas, autoBox: prepared.autoBox });
+      } catch {
+        showToast('error', 'Photo not read', 'This photo could not be prepared on this phone. Try another photo or use the camera.');
+      } finally {
+        URL.revokeObjectURL(url);
+      }
     };
     el.onerror = () => {
       URL.revokeObjectURL(url);
-      showToast('error', 'Image processing failed', 'Could not read this photo.');
+      showToast('error', 'Photo not read', 'This photo could not be opened. Try another photo.');
     };
     el.src = url;
   };
@@ -1169,6 +1187,18 @@ export const ScanDinoView: React.FC<ScanDinoViewProps> = ({ user, onQuickOperate
         </div>
       )}
 
+      {galleryPick && (
+        <GalleryBoxPicker
+          canvas={galleryPick.canvas}
+          autoBox={galleryPick.autoBox}
+          onCancel={() => setGalleryPick(null)}
+          onIdentify={(box) => {
+            const c = galleryPick.canvas;
+            setGalleryPick(null);
+            performSearch(c, c.width, c.height, 'gallery', box);
+          }}
+        />
+      )}
       <style>{`
         .sj-root { padding: 12px; width: 100%; max-width: 1100px; margin: 0 auto; box-sizing: border-box; }
         .sj-root * { box-sizing: border-box; }

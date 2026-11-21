@@ -50,3 +50,24 @@ export function prepareCatalogInput(source: CanvasImageSource, srcWidth: number,
   const pixels = tensorFromRGBA(work, W, H, r.box);
   return { ok: true, pixels, box: r.box, textPixels: r.textPixels, workWidth: W, workHeight: H };
 }
+
+/**
+ * Gallery photo for Scan (agreed 2026-11-21, after the gallery test: whole photo 39% right, colour crop 81%, box
+ * adjusted by hand 92%): the same 900px copy with the ID text removed as the catalog, plus the automatic box around
+ * the jewelry (null when none was found). The user adjusts the box, then the search reads only inside it.
+ */
+export function prepareGalleryPhoto(
+  source: CanvasImageSource,
+  srcWidth: number,
+  srcHeight: number,
+): { canvas: HTMLCanvasElement; width: number; height: number; autoBox: CropBox | null } {
+  const { data: work, width, height } = workCopy(source, srcWidth, srcHeight);
+  const r = cleanAndCrop(work, width, height); // paints the ID text, like the catalog
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas not available');
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(work), width, height), 0, 0);
+  return { canvas, width, height, autoBox: r.box };
+}
