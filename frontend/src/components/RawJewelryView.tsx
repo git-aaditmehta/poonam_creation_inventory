@@ -17,6 +17,8 @@ import { ITEM_KEY_SQL, itemKey } from '../utils/itemId';
 import { JewelryCategoryChips } from './JewelryCategoryChips';
 import { jewelryCategoryWhere, useJewelryTypes, type JewelryCategory } from '../utils/jewelryCategory';
 import type { RawJewelryItem, InventoryUnit, User } from '../types';
+import { ItemHistoryModal } from './ItemHistory';
+import { History as HistoryIcon } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { blockIfOffline, OFFLINE_TITLE } from '../utils/offlineGuard';
 import { GeneratePdfButton } from './GeneratePdfButton';
@@ -29,6 +31,7 @@ interface RawJewelryViewProps {
 }
 
 export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOperate }) => {
+  const [historyItem, setHistoryItem] = useState<{ id: string; item_id: string } | null>(null);
   const isOwner = user.role === 'owner';
   const { showToast } = useToast();
 
@@ -411,14 +414,22 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
                   </td>
                   <td>
                     <span
+                      role="button"
+                      tabIndex={0}
+                      title="Tap to see this item's stock history"
+                      onClick={() => setHistoryItem({ id: item.id, item_id: item.item_id })}
+                      onKeyDown={(e) => e.key === 'Enter' && setHistoryItem({ id: item.id, item_id: item.item_id })}
                       style={{
                         fontSize: 16,
                         fontWeight: 700,
+                        cursor: 'pointer',
+                        textDecoration: 'underline dotted',
+                        textUnderlineOffset: 4,
                         color: item.is_low_stock ? 'var(--amber-text)' : 'var(--text-primary)',
                       }}
                       className="mono"
                     >
-                      {item.quantity}
+                      {item.quantity} <HistoryIcon size={12} style={{ verticalAlign: 'middle', opacity: 0.5 }} />
                     </span>
                   </td>
                   <td>
@@ -668,6 +679,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
           </div>
         </div>
       )}
+      {historyItem && <ItemHistoryModal itemUuid={historyItem.id} title={`${historyItem.item_id} · stock history`} onClose={() => setHistoryItem(null)} />}
     </div>
   );
 };

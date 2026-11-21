@@ -21,6 +21,7 @@ import { localDb } from '../lib/localDb';
 import { isLowStock } from '../utils/lowStock';
 import { ITEM_KEY_SQL, itemKey } from '../utils/itemId';
 import { JewelryCategoryChips } from './JewelryCategoryChips';
+import { ItemHistory } from './ItemHistory';
 import { jewelryCategoryWhere, useJewelryTypes, type JewelryCategory } from '../utils/jewelryCategory';
 import type { PlatedJewelryItem, InventoryUnit, User } from '../types';
 import { useToast } from '../context/ToastContext';
@@ -51,6 +52,7 @@ interface PlatedJewelryViewProps {
 }
 
 export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQuickOperate }) => {
+  const [showItemHistory, setShowItemHistory] = useState(false);
   const isOwner = user.role === 'owner';
   const { showToast } = useToast();
 
@@ -71,6 +73,8 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [activeItem, setActiveItem] = useState<PlatedJewelryItem | null>(null);
   const [detailItem, setDetailItem] = useState<PlatedJewelryItem | null>(null);
+  const detailId = detailItem?.id;
+  useEffect(() => setShowItemHistory(false), [detailId]); // a newly opened design starts with its history hidden
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   // Form states
@@ -1056,7 +1060,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
       {/* ==================== DETAIL PANEL ==================== */}
       {detailItem && (
         <div className="detail-overlay" onClick={() => setDetailItem(null)}>
-          <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
+          <div className={`detail-panel ${showItemHistory ? 'history-open' : ''}`} onClick={(e) => e.stopPropagation()}>
             {/* Floating Close Button */}
             <button
               onClick={() => setDetailItem(null)}
@@ -1137,14 +1141,23 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
               {/* Compact Metrics Strip */}
               <div className="detail-metrics-strip">
-                <div className="detail-metric-item">
-                  <span className="detail-metric-label">Quantity</span>
+                <button
+                  type="button"
+                  className="detail-metric-item"
+                  onClick={() => setShowItemHistory((v) => !v)}
+                  title="Tap to see this design's stock history"
+                  aria-expanded={showItemHistory}
+                  style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', font: 'inherit' }}
+                >
+                  <span className="detail-metric-label">Quantity · {showItemHistory ? 'hide history ▴' : 'history ▾'}</span>
                   <div className="mono detail-metric-value" style={{
                     color: detailItem.is_low_stock ? 'var(--amber-text)' : 'var(--text-primary)',
+                    textDecoration: 'underline dotted',
+                    textUnderlineOffset: 4,
                   }}>
                     {detailItem.quantity}
                   </div>
-                </div>
+                </button>
 
                 <div className="detail-metric-item">
                   <span className="detail-metric-label">Threshold</span>
@@ -1162,6 +1175,9 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
                   </div>
                 )}
               </div>
+
+              {/* This design's stock movements: hidden until the Quantity is tapped */}
+              {showItemHistory && <ItemHistory key={detailItem.id} itemUuid={detailItem.id} startOpen />}
 
               {/* Actions */}
               <div className="detail-actions-row">

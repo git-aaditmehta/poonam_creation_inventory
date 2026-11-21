@@ -16,6 +16,8 @@ import { localDb } from '../lib/localDb';
 import { isLowStock } from '../utils/lowStock';
 import { ITEM_KEY_SQL, itemKey } from '../utils/itemId';
 import type { FoilItem, User } from '../types';
+import { ItemHistoryModal } from './ItemHistory';
+import { History as HistoryIcon } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
 import { blockIfOffline, OFFLINE_TITLE } from '../utils/offlineGuard';
 import { GeneratePdfButton } from './GeneratePdfButton';
@@ -28,6 +30,7 @@ interface FoilViewProps {
 }
 
 export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
+  const [historyItem, setHistoryItem] = useState<{ id: string; item_id: string } | null>(null);
   const isOwner = user.role === 'owner';
   const { showToast } = useToast();
 
@@ -460,14 +463,22 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
                   </td>
                   <td>
                     <span
+                      role="button"
+                      tabIndex={0}
+                      title="Tap to see this item's stock history"
+                      onClick={() => setHistoryItem({ id: item.id, item_id: item.item_id })}
+                      onKeyDown={(e) => e.key === 'Enter' && setHistoryItem({ id: item.id, item_id: item.item_id })}
                       style={{
                         fontSize: 16,
                         fontWeight: 700,
+                        cursor: 'pointer',
+                        textDecoration: 'underline dotted',
+                        textUnderlineOffset: 4,
                         color: item.is_low_stock ? 'var(--amber-text)' : 'var(--text-primary)',
                       }}
                       className="mono"
                     >
-                      {item.quantity}
+                      {item.quantity} <HistoryIcon size={12} style={{ verticalAlign: 'middle', opacity: 0.5 }} />
                     </span>
                   </td>
                   <td>
@@ -728,6 +739,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
           </div>
         </div>
       )}
+      {historyItem && <ItemHistoryModal itemUuid={historyItem.id} title={`${historyItem.item_id} · stock history`} onClose={() => setHistoryItem(null)} />}
     </div>
   );
 };

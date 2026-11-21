@@ -1268,3 +1268,9 @@ code, kbd, pre, .mono {
   .xl-connector > div:first-child, .xl-connector > div:last-child, .xl-dot { display: none !important; }
   .xl-pill { position: static; transform: none; margin: 0 auto; }
 }
+
+/* Item details on phones: while the stock history is open the photo gets smaller and the details scroll */
+@media (max-width: 700px) {
+  .detail-panel.history-open .detail-panel-image { height: 24vh; min-height: 0; flex: 0 0 auto; }
+  .detail-panel.history-open .detail-panel-info { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+}

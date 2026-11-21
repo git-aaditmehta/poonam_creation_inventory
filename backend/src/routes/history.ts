@@ -21,6 +21,7 @@ history.get('/', async (c) => {
   const dateFrom = c.req.query('date_from');
   const dateTo = c.req.query('date_to');
   const itemSearch = c.req.query('item_search');
+  const itemUuid = c.req.query('item_uuid'); // one item's own history (item details)
 
   let whereClause = 'WHERE 1=1';
   const params: unknown[] = [];
@@ -40,6 +41,10 @@ history.get('/', async (c) => {
   if (dateTo) {
     whereClause += ` AND created_at < ${IST_DAY_END_SQL}`;
     params.push(dateTo);
+  }
+  if (itemUuid) {
+    whereClause += ' AND item_id = ?';
+    params.push(itemUuid);
   }
   if (itemSearch) {
     // Also ignores capitals, spaces and dashes: "ps365" finds "PS-365"
