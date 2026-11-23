@@ -19,6 +19,7 @@ import {
   recalculateAllJewelryWithX,
   getCostingCategories,
   getCostingMaterialsByCategory,
+  updateCostingMaterial,
   getAllJewelryCostings,
   saveJewelryCosting,
   deleteJewelryCosting,
@@ -97,6 +98,8 @@ export const CostingView: React.FC<CostingViewProps> = ({
   const [selectedAddMaterialId, setSelectedAddMaterialId] = useState('');
   const [materialQtyInput, setMaterialQtyInput] = useState('');
   const [inlinePriceInput, setInlinePriceInput] = useState('');
+  // Price typed for a line that has no price yet: kept while typing, saved when finished (blur / Enter)
+  const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
 
   // Inline Weight Editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
@@ -264,9 +267,49 @@ export const CostingView: React.FC<CostingViewProps> = ({
     setSelectedAddMaterialId('');
     setMaterialQtyInput('');
     setInlinePriceInput('');
+    setPriceDrafts({});
   };
 
-  const handleAddMaterialToCell = () => {
+  /**
+   * A price typed in this editor is the material's price in Materials & Categories (agreed 2026-11-24): it is
+   * saved there, synced, and used by every design with that material. For a stone from the Kundan Stone section
+   * it is its COSTING price only; the stone in the Kundan Stone section is never changed.
+   */
+  const saveMaterialPrice = async (materialId: string, materialName: string, price: number): Promise<boolean> => {
+    try {
+      await updateCostingMaterial(materialId, { cost_price: price });
+      setAvailableCategoryMaterials((prev) => prev.map((m) => (m.id === materialId ? { ...m, cost_price: price } : m)));
+      // Every line of this material in the editor gets the price at once
+      setCellMaterials((prev) => prev.map((x) => (x.materialId === materialId ? { ...x, unitCost: price } : x)));
+      showToast('success', 'Price saved', `₹${price.toFixed(2)} is now the price of ${materialName} in Materials & Categories (used in every design).`);
+      return true;
+    } catch (err: any) {
+      const msg = /not found/i.test(String(err?.message))
+        ? `${materialName} no longer exists in Materials & Categories, so its price can't be saved. Remove it here and add it again.`
+        : errorText(err);
+      showToast('error', 'Price not saved', msg);
+      return false;
+    }
+  };
+
+  const commitLinePrice = async (idx: number) => {
+    const draft = priceDrafts[idx];
+    if (draft === undefined) return;
+    const line = cellMaterials[idx];
+    const p = parseFloat(draft);
+    if (draft.trim() === '' || !line) {
+      setPriceDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+      return;
+    }
+    if (isNaN(p) || p < 0) {
+      showToast('error', 'Price not saved', `"${draft}" is not a valid price. Enter a number like 45 or 2.50.`);
+      return;
+    }
+    const ok = await saveMaterialPrice(line.materialId, line.materialName, roundTo2(p));
+    if (ok) setPriceDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
+  };
+
+  const handleAddMaterialToCell = async () => {
     if (!editingCell || !selectedAddMaterialId) return;
 
     const mat = availableCategoryMaterials.find((m) => m.id === selectedAddMaterialId);
@@ -282,9 +325,13 @@ export const CostingView: React.FC<CostingViewProps> = ({
     let unitCost = mat.cost_price;
     if (unitCost === null && inlinePriceInput.trim() !== '') {
       const p = parseFloat(inlinePriceInput);
-      if (!isNaN(p) && p >= 0) {
-        unitCost = roundTo2(p);
+      if (isNaN(p) || p < 0) {
+        showToast('error', 'Price not valid', `"${inlinePriceInput}" is not a valid price. Enter a number like 45 or 2.50, or leave it empty.`);
+        return;
       }
+      // Saved as the material's price in Materials & Categories (not just for this design)
+      if (!(await saveMaterialPrice(mat.id, mat.name, roundTo2(p)))) return;
+      unitCost = roundTo2(p);
     }
 
     const newEntry: CostingMaterialEntry = {
@@ -304,6 +351,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
 
   const handleRemoveMaterialFromCell = (index: number) => {
     setCellMaterials((prev) => prev.filter((_, i) => i !== index));
+    setPriceDrafts({}); // line numbers shift
   };
 
   const handleUpdateCellMaterialQty = (index: number, val: string) => {
@@ -311,16 +359,6 @@ export const CostingView: React.FC<CostingViewProps> = ({
       prev.map((item, i) => {
         if (i !== index) return item;
         return { ...item, quantity: val };
-      })
-    );
-  };
-
-  const handleUpdateCellMaterialPrice = (index: number, val: string) => {
-    setCellMaterials((prev) =>
-      prev.map((item, i) => {
-        if (i !== index) return item;
-        const p = parseFloat(val);
-        return { ...item, unitCost: !isNaN(p) && p >= 0 ? roundTo2(p) : null };
       })
     );
   };
@@ -1365,7 +1403,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {cellMaterials.map((mat, idx) => {
-                      const hasMissingPrice = mat.unitCost === null || mat.unitCost === undefined;
+                      const hasMissingPrice = mat.unitCost === null || mat.unitCost === undefined || priceDrafts[idx] !== undefined;
                       return (
                         <div
                           key={idx}
@@ -1388,11 +1426,22 @@ export const CostingView: React.FC<CostingViewProps> = ({
                                 <input
                                   type="number"
                                   step="0.01"
+                                  inputMode="decimal"
                                   placeholder="Enter price"
-                                  style={{ width: 80, height: 26, fontSize: 12, padding: '2px 6px' }}
+                                  style={{ width: 90, height: 26, fontSize: 12, padding: '2px 6px' }}
                                   className="input mono"
-                                  onChange={(e) => handleUpdateCellMaterialPrice(idx, e.target.value)}
+                                  value={priceDrafts[idx] ?? ''}
+                                  onChange={(e) => setPriceDrafts((d) => ({ ...d, [idx]: e.target.value }))}
+                                  onBlur={() => commitLinePrice(idx)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      (e.target as HTMLInputElement).blur();
+                                    }
+                                  }}
+                                  aria-label={`Price of ${mat.materialName}`}
                                 />
+                                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>saved for all designs</span>
                               </div>
                             ) : (
                               <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -1498,7 +1547,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
                       return (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#D97706', marginTop: 8, fontWeight: 500 }}>
                           <AlertCircle size={14} />
-                          <span>Price missing in master list. Set price for this design: ₹</span>
+                          <span>No price yet in Materials &amp; Categories. Price (saved there, for all designs): ₹</span>
                           <input
                             type="number"
                             step="0.01"
