@@ -8,6 +8,7 @@ import { errorText } from '../utils/friendlyErrors';
 import { StockPdfModal } from './StockPdfModal';
 import type { GeneratedPdfResult } from '../utils/pdfGenerator';
 import { useJewelryTypes, typeOfItemId, typeLabel } from '../utils/jewelryCategory';
+import { sortLowStock as inDisplayOrder } from '../utils/itemOrder';
 
 const CATEGORY_LABEL: Record<string, string> = {
   plated_jewelry: 'Plated Jewelry',
@@ -35,11 +36,11 @@ export const LowStockView: React.FC<LowStockViewProps> = ({ onQuickRestock }) =>
   const fetchLowStock = useCallback(async () => {
     try {
       const lowStockItems = await localDb.getLowStockItems();
-      setItems(lowStockItems as LowStockItem[]);
+      setItems(inDisplayOrder(lowStockItems as LowStockItem[]));
     } catch {
       try {
         const res = await api.inventory.getLowStock();
-        setItems(res.items);
+        setItems(inDisplayOrder(res.items));
       } catch (err: any) {
         showToast('error', 'Failed to fetch low stock alerts', errorText(err));
       }

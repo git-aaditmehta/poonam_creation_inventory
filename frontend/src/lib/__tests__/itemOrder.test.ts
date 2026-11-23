@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { KUNDAN_ORDER, compareStoneNames, compareJewelryCodes, sortInventory, stoneFamily } from '../../utils/itemOrder';
+import { KUNDAN_ORDER, compareStoneNames, compareJewelryCodes, sortInventory, sortLowStock, stoneFamily } from '../../utils/itemOrder';
 import { DEFAULT_JEWELRY_TYPES } from '../../utils/jewelryCategory';
 
 const shuffle = <T,>(a: T[]) => a.map((v, i) => [Math.sin(i * 9301 + 49297) , v] as const).sort((x, y) => x[0] - y[0]).map(([, v]) => v);
@@ -29,5 +29,17 @@ describe('display order (2026-11-22)', () => {
   it('Foil: lightest first', () => {
     const rows = [{ item_id: 'F2', quantity: 1.5 }, { item_id: 'F1', quantity: 0.2 }, { item_id: 'F3', quantity: 10 }];
     expect(sortInventory('foil', rows).map((r) => r.item_id)).toEqual(['F1', 'F2', 'F3']);
+  });
+  it('Low Stock: Plated, Raw, Kundan, Foil, each in its own section order', () => {
+    const rows = [
+      { category: 'foil', item_id: 'F2', quantity: 2 }, { category: 'stones', item_id: 'P21', quantity: 1 },
+      { category: 'raw_jewelry', item_id: 'PS 10', quantity: 0 }, { category: 'plated_jewelry', item_id: 'PS 10', quantity: 0 },
+      { category: 'stones', item_id: '3/5 DROP', quantity: 1 }, { category: 'plated_jewelry', item_id: 'ER 7', quantity: 0 },
+      { category: 'raw_jewelry', item_id: 'ER 2', quantity: 0 }, { category: 'foil', item_id: 'F1', quantity: 0.5 },
+      { category: 'plated_jewelry', item_id: 'PS 2', quantity: 0 },
+    ];
+    expect(sortLowStock(rows).map((r) => `${r.category.slice(0, 3)}:${r.item_id}`)).toEqual([
+      'pla:ER 7', 'pla:PS 2', 'pla:PS 10', 'raw:ER 2', 'raw:PS 10', 'sto:3/5 DROP', 'sto:P21', 'foi:F1', 'foi:F2',
+    ]);
   });
 });

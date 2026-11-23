@@ -94,3 +94,15 @@ export function sortInventory<T extends { item_id: string; quantity?: number }>(
   }
   return out;
 }
+
+/**
+ * Low Stock (agreed 2026-11-23): Plated, Raw, Kundan Stone, Foil, each sorted exactly as its own section, so a
+ * category filter shows its items in the same order as that section.
+ */
+const SECTION_ORDER = ['plated_jewelry', 'raw_jewelry', 'stones', 'foil'];
+export function sortLowStock<T extends { category: string; item_id: string; quantity?: number }>(list: T[]): T[] {
+  return [
+    ...SECTION_ORDER.flatMap((c) => sortInventory(c, list.filter((i) => i.category === c))),
+    ...list.filter((i) => !SECTION_ORDER.includes(i.category)),
+  ];
+}
