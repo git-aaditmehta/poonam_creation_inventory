@@ -13,7 +13,7 @@ import {
 import { api } from '../api';
 import { localDb } from '../lib/localDb';
 import type { Transaction, UnitTotal, User } from '../types';
-import { undoBlockedReason, UNDO_DAYS } from '../lib/stockUndo';
+import { undoBlockedReason, UNDO_DAYS, localHistorySignature } from '../lib/stockUndo';
 import { confirmAndUndo } from './RecentStockOps';
 import { formatIST, istDayStartUtc, istDayEndUtc, todayIST } from '../utils/time';
 import { itemIdSearchSql } from '../utils/itemId';
@@ -135,9 +135,18 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
     // Offline the list IS this phone's copy: refresh at once. Online it comes from the cloud: refresh shortly
     // after sync activity settles (not on every background sync tick).
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastSig = '';
+    localHistorySignature().then((sig) => { lastSig = sig; });
     const handler = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => fetchHistory(true), navigator.onLine ? 2000 : 0);
+      timer = setTimeout(async () => {
+        // Online the list comes from the cloud (which recounts the whole filtered history): ask again only when a
+        // stock movement was actually added on this phone's copy. Offline the list IS that copy: always refresh.
+        const sig = await localHistorySignature();
+        if (navigator.onLine && sig && sig === lastSig) return;
+        lastSig = sig;
+        fetchHistory(true);
+      }, navigator.onLine ? 2000 : 0);
     };
     window.addEventListener('localdb-change', handler);
     return () => {

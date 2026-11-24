@@ -4,6 +4,7 @@ import { api } from '../api';
 import { localDb } from '../lib/localDb';
 import type { Transaction } from '../types';
 import { formatIST } from '../utils/time';
+import { localHistorySignature } from '../lib/stockUndo';
 
 const PAGE = 10;
 const n = (x: number) => String(Math.round(Number(x) * 1000) / 1000);
@@ -57,9 +58,14 @@ export const ItemHistory: React.FC<{ itemUuid: string; startOpen?: boolean }> = 
     setPage(1);
     load(1);
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastSig = '';
+    localHistorySignature(itemUuid).then((sig) => { lastSig = sig; });
     const refresh = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
+      timer = setTimeout(async () => {
+        const sig = await localHistorySignature(itemUuid); // only when this item got a new movement
+        if (sig && sig === lastSig) return;
+        lastSig = sig;
         setPage(1);
         load(1);
       }, 1500);

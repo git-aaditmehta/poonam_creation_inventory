@@ -5,7 +5,7 @@ import type { Transaction, User } from '../types';
 import { formatIST } from '../utils/time';
 import { useToast } from '../context/ToastContext';
 import { errorText } from '../utils/friendlyErrors';
-import { undoBlockedReason, undoStockOperation, UNDO_DAYS } from '../lib/stockUndo';
+import { undoBlockedReason, undoStockOperation, UNDO_DAYS, localHistorySignature } from '../lib/stockUndo';
 
 const CATEGORY_LABEL: Record<string, string> = { plated_jewelry: 'Plated', raw_jewelry: 'Raw', stones: 'Kundan', foil: 'Foil' };
 const n = (x: number) => String(Math.round(Number(x) * 1000) / 1000);
@@ -15,21 +15,21 @@ export function describeMove(t: Pick<Transaction, 'operation' | 'quantity_change
   return `${t.operation === 'add' ? 'stock in' : 'stock out'} of ${n(t.quantity_change)} ${t.unit} on ${t.item_display_id}`;
 }
 
-/** Asks, undoes in the cloud, and says what happened. Returns true when undone. */
+/** Asks, undoes in the cloud, and says what happened. Returns the cloud's new balance when undone, else null. */
 export async function confirmAndUndo(
   t: Pick<Transaction, 'id' | 'operation' | 'quantity_change' | 'unit' | 'item_display_id' | 'performer_name' | 'created_at'> & { idempotency_key?: string },
   showToast: (type: 'success' | 'error' | 'info' | 'warning', title: string, message?: string) => void,
   byKey = false,
-): Promise<boolean> {
+): Promise<{ newBalance: number; unit: string } | null> {
   const back = t.operation === 'add' ? `go down by ${n(t.quantity_change)}` : `go back up by ${n(t.quantity_change)}`;
-  if (!window.confirm(`Undo ${describeMove(t)} (by ${t.performer_name}, ${formatIST(t.created_at)})?\n\nThe stock will ${back} ${t.unit}. The history keeps both entries.`)) return false;
+  if (!window.confirm(`Undo ${describeMove(t)} (by ${t.performer_name}, ${formatIST(t.created_at)})?\n\nThe stock will ${back} ${t.unit}. The history keeps both entries.`)) return null;
   try {
-    const msg = await undoStockOperation(byKey && t.idempotency_key ? { idempotency_key: t.idempotency_key } : { transaction_id: t.id });
-    showToast('success', 'Undone', msg);
-    return true;
+    const res = await undoStockOperation(byKey && t.idempotency_key ? { idempotency_key: t.idempotency_key } : { transaction_id: t.id });
+    showToast('success', 'Undone', res.message);
+    return { newBalance: res.newBalance, unit: res.unit };
   } catch (err: any) {
     showToast('error', 'Not undone', err?.message || errorText(err));
-    return false;
+    return null;
   }
 }
 
@@ -46,7 +46,7 @@ export const RecentStockOps: React.FC<{ user: User | null }> = ({ user }) => {
   const load = useCallback(async () => {
     if (!navigator.onLine) return;
     try {
-      const res = await api.history.list({ page: 1, limit: 10 });
+      const res = await api.history.list({ page: 1, limit: 10, lite: true });
       setRows(res.transactions);
     } catch {
       /* keep the last list */
@@ -54,11 +54,19 @@ export const RecentStockOps: React.FC<{ user: User | null }> = ({ user }) => {
   }, []);
 
   useEffect(() => {
+    let lastSig = '';
+    localHistorySignature().then((sig) => { lastSig = sig; });
     load();
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // After a sync: ask the cloud again only if a stock movement was added on this phone's copy (from any phone)
     const refresh = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(load, 1200); // after the change reached the cloud
+      timer = setTimeout(async () => {
+        const sig = await localHistorySignature();
+        if (sig && sig === lastSig) return;
+        lastSig = sig;
+        load();
+      }, 1200);
     };
     const on = () => {
       setOnline(true);

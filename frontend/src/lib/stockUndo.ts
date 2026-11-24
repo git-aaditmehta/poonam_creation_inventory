@@ -26,8 +26,8 @@ export function undoBlockedReason(tx: Pick<Transaction, 'reverses_id' | 'undone_
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Undo; returns the message to show. Throws an Error with a plain-words message if it can't be done. */
-export async function undoStockOperation(ref: { transaction_id?: string; idempotency_key?: string }): Promise<string> {
+/** Undo; returns the message and the cloud's exact new balance. Throws an Error with a plain-words message if it can't be done. */
+export async function undoStockOperation(ref: { transaction_id?: string; idempotency_key?: string }): Promise<{ message: string; newBalance: number; unit: string }> {
   if (!navigator.onLine) throw new Error('Undo needs internet, because it changes the stock in the cloud. Connect and try again.');
   let res: Awaited<ReturnType<typeof api.stock.undo>> | null = null;
   for (let attempt = 0; attempt < 6 && !res; attempt++) {
@@ -57,5 +57,26 @@ export async function undoStockOperation(ref: { transaction_id?: string; idempot
     /* the next sync corrects it */
   }
   syncEngine.triggerSync().catch(() => undefined);
-  return res.message;
+  return { message: res.message, newBalance: res.new_balance, unit: res.unit };
+}
+
+/**
+ * A cheap fingerprint of this phone's copy of the stock history (how many movements, the newest one). Screens that
+ * show the cloud's history compare it after each sync and ask the cloud again only when it changed: a new movement
+ * (from any phone, including an undo) always reaches this copy through the sync (agreed 2026-11-24, saves the
+ * free daily cloud reads). Never throws; '' when unknown (= ask the cloud).
+ */
+export async function localHistorySignature(itemUuid?: string): Promise<string> {
+  try {
+    // p = movements made on this phone that still carry their temporary id ("tx_…"): it drops when the cloud's id
+    // replaces it, so the screen also refreshes once this phone's own movement has reached the cloud
+    const r = await localDb.get<{ n: number; m: string | null; p: number | null }>(
+      `SELECT COUNT(*) AS n, MAX(created_at) AS m, SUM(CASE WHEN id LIKE 'tx_%' THEN 1 ELSE 0 END) AS p
+       FROM transactions${itemUuid ? ' WHERE item_id = ?' : ''}`,
+      itemUuid ? [itemUuid] : [],
+    );
+    return r ? `${r.n}|${r.m ?? ''}|${r.p ?? 0}` : '';
+  } catch {
+    return '';
+  }
 }

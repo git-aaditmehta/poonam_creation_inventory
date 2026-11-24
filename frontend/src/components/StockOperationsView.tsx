@@ -600,7 +600,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
               Balance: {lastReceipt.quantity_before ?? lastReceipt.previous_balance} → {lastReceipt.new_balance} {lastReceipt.unit}
             </div>
             {lastReceipt.undone ? (
-              <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>↶ Undone — the stock is back to {lastReceipt.quantity_before} {lastReceipt.unit}.</div>
+              <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>↶ Undone — the stock is now {lastReceipt.balance_after_undo ?? lastReceipt.quantity_before} {lastReceipt.unit}.</div>
             ) : (
               <button
                 type="button"
@@ -629,8 +629,9 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
                   );
                   setUndoingReceipt(false);
                   if (ok) {
-                    setLastReceipt((r: any) => (r ? { ...r, undone: true } : r));
-                    if (selectedItem) setSelectedItem({ ...selectedItem, quantity: lastReceipt.quantity_before });
+                    // The cloud's exact balance after the undo (not a guess from the receipt)
+                    setLastReceipt((r: any) => (r ? { ...r, undone: true, balance_after_undo: ok.newBalance } : r));
+                    if (selectedItem && selectedItem.item_id === lastReceipt.item_id) setSelectedItem({ ...selectedItem, quantity: ok.newBalance });
                     onOperationSuccess?.();
                   }
                 }}

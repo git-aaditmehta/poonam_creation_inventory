@@ -228,6 +228,8 @@ export const api = {
       date_to?: string;
       item_search?: string;
       item_uuid?: string;
+      /** Newest rows only, without recounting the whole history (cheap; for Recent operations). */
+      lite?: boolean;
     } = {}) => {
       const q = new URLSearchParams();
       if (params.page) q.set('page', params.page.toString());
@@ -237,6 +239,7 @@ export const api = {
       if (params.date_to) q.set('date_to', params.date_to);
       if (params.item_search) q.set('item_search', params.item_search);
       if (params.item_uuid) q.set('item_uuid', params.item_uuid);
+      if (params.lite) q.set('lite', '1');
       return request<HistoryResponse>(`/api/history?${q.toString()}`);
     },
     prepareDelete: (date_from: string, date_to: string) =>

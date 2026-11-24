@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -100,6 +100,11 @@ export const CostingView: React.FC<CostingViewProps> = ({
   const [inlinePriceInput, setInlinePriceInput] = useState('');
   // Price typed for a line that has no price yet: kept while typing, saved when finished (blur / Enter)
   const [priceDrafts, setPriceDrafts] = useState<Record<number, string>>({});
+  // Always the latest editor lines and any price being saved, so "Save & Recalculate" tapped right after typing a
+  // price waits for it and checks the right lines (no false "missing prices" message)
+  const cellRef = useRef<CostingMaterialEntry[]>([]);
+  useEffect(() => { cellRef.current = cellMaterials; }, [cellMaterials]);
+  const pendingPriceSave = useRef<Promise<unknown> | null>(null);
 
   // Inline Weight Editing
   const [editingWeightId, setEditingWeightId] = useState<string | null>(null);
@@ -280,6 +285,7 @@ export const CostingView: React.FC<CostingViewProps> = ({
       await updateCostingMaterial(materialId, { cost_price: price });
       setAvailableCategoryMaterials((prev) => prev.map((m) => (m.id === materialId ? { ...m, cost_price: price } : m)));
       // Every line of this material in the editor gets the price at once
+      cellRef.current = cellRef.current.map((x) => (x.materialId === materialId ? { ...x, unitCost: price } : x));
       setCellMaterials((prev) => prev.map((x) => (x.materialId === materialId ? { ...x, unitCost: price } : x)));
       showToast('success', 'Price saved', `₹${price.toFixed(2)} is now the price of ${materialName} in Materials & Categories (used in every design).`);
       return true;
@@ -305,7 +311,9 @@ export const CostingView: React.FC<CostingViewProps> = ({
       showToast('error', 'Price not saved', `"${draft}" is not a valid price. Enter a number like 45 or 2.50.`);
       return;
     }
-    const ok = await saveMaterialPrice(line.materialId, line.materialName, roundTo2(p));
+    const job = saveMaterialPrice(line.materialId, line.materialName, roundTo2(p));
+    pendingPriceSave.current = job;
+    const ok = await job;
     if (ok) setPriceDrafts((d) => { const n = { ...d }; delete n[idx]; return n; });
   };
 
@@ -365,6 +373,10 @@ export const CostingView: React.FC<CostingViewProps> = ({
 
   const handleSaveCellEdits = async () => {
     if (!editingCell) return;
+    // A price typed just before tapping Save: wait until it is stored, then use the up-to-date lines
+    if (pendingPriceSave.current) await pendingPriceSave.current.catch(() => undefined);
+    pendingPriceSave.current = null;
+    const cellMaterials = cellRef.current;
 
     const costing = costings.find((c) => c.id === editingCell.costingId);
     if (!costing) return;

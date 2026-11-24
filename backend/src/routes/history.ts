@@ -22,6 +22,9 @@ history.get('/', async (c) => {
   const dateTo = c.req.query('date_to');
   const itemSearch = c.req.query('item_search');
   const itemUuid = c.req.query('item_uuid'); // one item's own history (item details)
+  // lite=1: just the newest rows (Recent operations, item history). No total count / per-unit totals, which read
+  // the whole history every time (agreed 2026-11-24, protects the free daily read limit as history grows).
+  const lite = c.req.query('lite') === '1';
 
   let whereClause = 'WHERE 1=1';
   const params: unknown[] = [];
@@ -53,6 +56,29 @@ history.get('/', async (c) => {
       ? ` AND (item_display_id LIKE ? OR REPLACE(REPLACE(UPPER(TRIM(item_display_id)), ' ', ''), '-', '') LIKE ?)`
       : ' AND item_display_id LIKE ?';
     params.push(`%${itemSearch}%`, ...(key ? [`%${key}%`] : []));
+  }
+
+  if (lite) {
+    const rows = await c.env.DB.prepare(
+      `SELECT t.*,
+         (SELECT r.performer_name FROM transactions r WHERE r.reverses_id = t.id) AS undone_by,
+         (SELECT r.created_at FROM transactions r WHERE r.reverses_id = t.id) AS undone_at
+       FROM transactions t ${whereClause} ORDER BY t.created_at DESC LIMIT ? OFFSET ?`
+    ).bind(...params, limit + 1, offset).all();
+    const list = rows.results || [];
+    const hasMore = list.length > limit;
+    return c.json({
+      transactions: list.slice(0, limit),
+      lite: true,
+      has_more: hasMore,
+      // Kept so older screens don't break; not counted in lite mode
+      totals: { total_added: 0, total_subtracted: 0 },
+      totals_by_unit: [],
+      total: offset + Math.min(list.length, limit) + (hasMore ? 1 : 0),
+      page,
+      limit,
+      totalPages: page + (hasMore ? 1 : 0),
+    });
   }
 
   // Get paginated results
