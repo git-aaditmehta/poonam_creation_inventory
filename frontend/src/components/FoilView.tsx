@@ -54,8 +54,10 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   const [formCost, setFormCost] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchItems = useCallback(async (forceCloud = false) => {
-    setIsLoading(true);
+  // quiet = a background refresh after a sync: update the list in place (no spinner), so the page never jumps to
+  // the top while someone is scrolled down (2026-11-24)
+  const fetchItems = useCallback(async (forceCloud = false, quiet = false) => {
+    if (!quiet) setIsLoading(true);
     try {
       if (!forceCloud) {
         const res = await localDb.getItemsPaginated<FoilItem>('foil', page, 30, search.trim() || undefined);
@@ -119,7 +121,7 @@ export const FoilView: React.FC<FoilViewProps> = ({ user, onQuickOperate }) => {
   }, [fetchValuation]);
 
   useEffect(() => {
-    const handler = () => { fetchItems(); fetchValuation(); };
+    const handler = () => { fetchItems(false, true); fetchValuation(); };
     window.addEventListener('localdb-change', handler);
     return () => window.removeEventListener('localdb-change', handler);
   }, [fetchItems, fetchValuation]);

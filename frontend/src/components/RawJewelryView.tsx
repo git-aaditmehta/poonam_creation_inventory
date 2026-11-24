@@ -58,8 +58,10 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
   const [formThreshold, setFormThreshold] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchItems = useCallback(async (forceCloud = false) => {
-    setIsLoading(true);
+  // quiet = a background refresh after a sync: update the list in place (no spinner), so the page never jumps to
+  // the top while someone is scrolled down (2026-11-24)
+  const fetchItems = useCallback(async (forceCloud = false, quiet = false) => {
+    if (!quiet) setIsLoading(true);
     const catFilter = jewelryCat ? jewelryCategoryWhere(jewelryCat) : undefined;
     // Chip counts come from this phone's copy (instant, offline); never block the list on them
     const counts = await localDb.countByJewelryCategory('raw_jewelry').catch(() => null);
@@ -105,7 +107,7 @@ export const RawJewelryView: React.FC<RawJewelryViewProps> = ({ user, onQuickOpe
   }, [fetchItems]);
 
   useEffect(() => {
-    const handler = () => fetchItems();
+    const handler = () => fetchItems(false, true);
     window.addEventListener('localdb-change', handler);
     return () => window.removeEventListener('localdb-change', handler);
   }, [fetchItems]);

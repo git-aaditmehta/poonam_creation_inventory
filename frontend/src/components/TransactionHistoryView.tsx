@@ -91,8 +91,9 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
   }, [localWhere, page]);
 
   // Online: the complete history from the cloud. Offline (or cloud unreachable): this phone's recent copy.
-  const fetchHistory = useCallback(async () => {
-    setIsLoading(true);
+  // quiet = a background refresh after a sync: no spinner, the page stays where it is (2026-11-24)
+  const fetchHistory = useCallback(async (quiet = false) => {
+    if (!quiet) setIsLoading(true);
     try {
       if (navigator.onLine) {
         try {
@@ -136,7 +137,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
     let timer: ReturnType<typeof setTimeout> | null = null;
     const handler = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => fetchHistory(), navigator.onLine ? 2000 : 0);
+      timer = setTimeout(() => fetchHistory(true), navigator.onLine ? 2000 : 0);
     };
     window.addEventListener('localdb-change', handler);
     return () => {
@@ -534,7 +535,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
                           setUndoing(t.id);
                           const ok = await confirmAndUndo(t, showToast);
                           setUndoing(null);
-                          if (ok) fetchHistory();
+                          if (ok) fetchHistory(true);
                         }}
                         title={`Undo this operation (possible for ${UNDO_DAYS} days)`}
                       >

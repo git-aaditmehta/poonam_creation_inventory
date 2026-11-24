@@ -104,8 +104,10 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  const fetchItems = useCallback(async (forceCloud = false) => {
-    setIsLoading(true);
+  // quiet = a background refresh after a sync: update the list in place (no spinner), so the page never jumps to
+  // the top while someone is scrolled down (2026-11-24)
+  const fetchItems = useCallback(async (forceCloud = false, quiet = false) => {
+    if (!quiet) setIsLoading(true);
     const catFilter = jewelryCat ? jewelryCategoryWhere(jewelryCat) : undefined;
     // Chip counts come from this phone's copy (instant, offline); never block the list on them
     const counts = await localDb.countByJewelryCategory('plated_jewelry').catch(() => null);
@@ -173,7 +175,7 @@ export const PlatedJewelryView: React.FC<PlatedJewelryViewProps> = ({ user, onQu
 
   // Re-fetch when local data changes (from sync)
   useEffect(() => {
-    const handler = () => { fetchItems(); fetchValuation(); };
+    const handler = () => { fetchItems(false, true); fetchValuation(); };
     window.addEventListener('localdb-change', handler);
     return () => window.removeEventListener('localdb-change', handler);
   }, [fetchItems, fetchValuation]);
