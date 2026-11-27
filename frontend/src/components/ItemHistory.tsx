@@ -112,6 +112,7 @@ export const ItemHistory: React.FC<{ itemUuid: string; startOpen?: boolean }> = 
               <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 1 }}>
                 {t.performer_name || t.performed_by} · {formatIST(t.created_at)}
               </div>
+              {t.remarks && <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginTop: 2, fontStyle: 'italic' }}>“{t.remarks}”</div>}
             </div>
           ))}
           {loading && (

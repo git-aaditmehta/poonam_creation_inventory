@@ -228,6 +228,8 @@ export const api = {
       date_to?: string;
       item_search?: string;
       item_uuid?: string;
+      /** Words in the remarks (2026-11-27). */
+      remark_search?: string;
       /** Newest rows only, without recounting the whole history (cheap; for Recent operations). */
       lite?: boolean;
     } = {}) => {
@@ -239,6 +241,7 @@ export const api = {
       if (params.date_to) q.set('date_to', params.date_to);
       if (params.item_search) q.set('item_search', params.item_search);
       if (params.item_uuid) q.set('item_uuid', params.item_uuid);
+      if (params.remark_search) q.set('remark_search', params.remark_search);
       if (params.lite) q.set('lite', '1');
       return request<HistoryResponse>(`/api/history?${q.toString()}`);
     },

@@ -37,6 +37,8 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [itemSearch, setItemSearch] = useState<string>('');
+  // Words in the remarks (2026-11-27)
+  const [remarkSearch, setRemarkSearch] = useState<string>('');
 
   // Totals per unit (pieces, grams and kg are never added together)
   const [unitTotals, setUnitTotals] = useState<UnitTotal[]>([]);
@@ -65,8 +67,12 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
       where += ` AND ${q.sql}`;
       params.push(...q.params);
     }
+    if (remarkSearch.trim()) {
+      where += ' AND remarks LIKE ?';
+      params.push(`%${remarkSearch.trim()}%`);
+    }
     return { where, params };
-  }, [category, dateFrom, dateTo, itemSearch]);
+  }, [category, dateFrom, dateTo, itemSearch, remarkSearch]);
 
   const loadFromPhone = useCallback(async () => {
     const { where, params } = localWhere();
@@ -104,6 +110,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
             date_from: dateFrom || undefined,
             date_to: dateTo || undefined,
             item_search: itemSearch.trim() || undefined,
+            remark_search: remarkSearch.trim() || undefined,
           });
           setTransactions(res.transactions);
           setUnitTotals(res.totals_by_unit ?? []);
@@ -125,7 +132,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
     } finally {
       setIsLoading(false);
     }
-  }, [page, category, dateFrom, dateTo, itemSearch, showToast, loadFromPhone]);
+  }, [page, category, dateFrom, dateTo, itemSearch, remarkSearch, showToast, loadFromPhone]);
 
   useEffect(() => {
     fetchHistory();
@@ -169,6 +176,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
               date_from: dateFrom || undefined,
               date_to: dateTo || undefined,
               item_search: itemSearch.trim() || undefined,
+              remark_search: remarkSearch.trim() || undefined,
             });
             rows.push(...res.transactions);
             if (p >= (res.totalPages || 1)) break;
@@ -197,7 +205,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
         return;
       }
       const { generateHistoryPdf } = await import('../utils/historyPdf');
-      setPdfResult(generateHistoryPdf({ rows, filters: { category, dateFrom, dateTo, itemSearch }, complete: fromCloud }));
+      setPdfResult(generateHistoryPdf({ rows, filters: { category, dateFrom, dateTo, itemSearch, remarkSearch }, complete: fromCloud }));
       if (!fromCloud) showToast('info', 'Made offline', 'Only the recent movements stored on this phone are in this PDF. Connect to the internet for the complete history.');
     } catch (err: any) {
       showToast('error', 'PDF could not be made', errorText(err));
@@ -225,6 +233,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
         'Balance Before': t.quantity_before,
         'Balance After': t.quantity_after,
         'Done by': t.performer_name || t.performed_by,
+        'Remarks': t.remarks || '',
         'Transaction ID': t.id,
       }));
       const ws = XLSX.utils.json_to_sheet(exportData);
@@ -382,6 +391,23 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
           />
         </div>
 
+        {/* Search in remarks (2026-11-27) */}
+        <div style={{ position: 'relative', width: 200 }}>
+          <Search size={14} color="var(--text-muted)" style={{ position: 'absolute', left: 10, top: 11 }} />
+          <input
+            type="text"
+            className="input"
+            style={{ paddingLeft: 32, fontSize: 12 }}
+            placeholder="Search remarks..."
+            aria-label="Search remarks"
+            value={remarkSearch}
+            onChange={(e) => {
+              setRemarkSearch(e.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
+
         {/* Date From */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>From:</span>
@@ -412,7 +438,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
           />
         </div>
 
-        {(category || dateFrom || dateTo || itemSearch) && (
+        {(category || dateFrom || dateTo || itemSearch || remarkSearch) && (
           <button
             className="btn btn-secondary"
             style={{ padding: '6px 10px', fontSize: 12 }}
@@ -421,6 +447,7 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
               setDateFrom('');
               setDateTo('');
               setItemSearch('');
+              setRemarkSearch('');
               setPage(1);
             }}
           >
@@ -499,6 +526,11 @@ export const TransactionHistoryView: React.FC<{ user: User | null }> = ({ user }
                     <div style={{ fontWeight: 700 }} className="mono">
                       {t.item_display_id}
                     </div>
+                    {t.remarks && (
+                      <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 3, maxWidth: 260, whiteSpace: 'normal', fontStyle: 'italic' }} title="Remarks">
+                        “{t.remarks}”
+                      </div>
+                    )}
                   </td>
                   <td>
                     {t.operation === 'add' ? (

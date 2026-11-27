@@ -17,6 +17,7 @@ import { localDb } from '../lib/localDb';
 import { isLowStock } from '../utils/lowStock';
 import { itemIdSearchSql } from '../utils/itemId';
 import { enqueuePendingOp, getAllPendingOps, type PendingOp } from '../lib/pendingOps';
+import { cleanRemarks, countWords, REMARKS_MAX_WORDS, REMARKS_MAX_CHARS } from '../utils/remarks';
 import { syncEngine } from '../lib/syncEngine';
 import type { InventoryCategory, BaseInventoryItem, User } from '../types';
 import { RecentStockOps, confirmAndUndo } from './RecentStockOps';
@@ -45,6 +46,10 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
 
   const [operation, setOperation] = useState<'add' | 'subtract'>('add');
   const [quantity, setQuantity] = useState<number | ''>('');
+  // Optional remarks (2026-11-27): e.g. the buyer's name when subtracting, or where it came from when adding
+  const [remarks, setRemarks] = useState('');
+  const remarksWords = countWords(remarks);
+  const remarksTooLong = remarksWords > REMARKS_MAX_WORDS || remarks.trim().length > REMARKS_MAX_CHARS;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<any | null>(null);
   const [undoingReceipt, setUndoingReceipt] = useState(false);
@@ -160,6 +165,12 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
       showToast('error', 'Insufficient Stock', `Cannot subtract ${quantity}. Only ${currentQty} in stock.`);
       return;
     }
+    const cleaned = cleanRemarks(remarks);
+    if (cleaned && typeof cleaned === 'object') {
+      showToast('error', 'Remarks too long', `${cleaned.error} Nothing was changed.`);
+      return;
+    }
+    const remarksText: string | null = cleaned;
 
     setIsSubmitting(true);
     // Generate crypto idempotency key & IDs
@@ -188,6 +199,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
           idempotency_key: idempotencyKey,
           display_item_id: selectedItem.item_id,
           unit: selectedItem.unit,
+          ...(remarksText ? { remarks: remarksText } : {}),
         }),
       });
 
@@ -200,12 +212,12 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         await localDb.exec(
           `INSERT INTO transactions
             (id, category, item_id, item_display_id, operation, quantity_before,
-             quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, created_at, remarks)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             txId, category, selectedItem.id, selectedItem.item_id, operation,
             currentQty, changeQty, newBalance, selectedItem.unit,
-            user?.id || 'offline_user', user?.username || 'You (Offline)', idempotencyKey, nowIso
+            user?.id || 'offline_user', user?.username || 'You (Offline)', idempotencyKey, nowIso, remarksText
           ]
         );
         window.dispatchEvent(new CustomEvent('localdb-change', { detail: { store: category } }));
@@ -243,6 +255,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
         quantity: newBalance,
       });
       setQuantity('');
+      setRemarks('');
 
       if (onOperationSuccess) {
         onOperationSuccess();
@@ -517,6 +530,26 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
             )}
           </div>
 
+          {/* Remarks (optional, 2026-11-27) */}
+          <div className="form-group">
+            <label className="form-label" htmlFor="stock-remarks">
+              Remarks <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
+            </label>
+            <textarea
+              id="stock-remarks"
+              className={`input ${remarksTooLong ? 'error' : ''}`}
+              rows={2}
+              maxLength={REMARKS_MAX_CHARS + 50}
+              style={{ resize: 'vertical', minHeight: 44, fontSize: 13 }}
+              placeholder={operation === 'add' ? 'e.g. From Ravi karigar, lot 12' : 'e.g. Sold to Kunalji'}
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+            />
+            <span style={{ fontSize: 11, color: remarksTooLong ? 'var(--rose-text)' : 'var(--text-muted)', alignSelf: 'flex-end' }}>
+              {remarksWords} / {REMARKS_MAX_WORDS} words{remarksTooLong ? ` — please shorten (at most ${REMARKS_MAX_WORDS} words, ${REMARKS_MAX_CHARS} characters)` : ''}
+            </span>
+          </div>
+
           {/* Projected Balance Preview Card */}
           {selectedItem && typeof quantity === 'number' && quantity > 0 && !isInsufficient && (
             <div
@@ -546,7 +579,7 @@ export const StockOperationsView: React.FC<StockOperationsViewProps> = ({
             type="submit"
             className="btn btn-primary"
             style={{ width: '100%', padding: '14px', fontSize: 15 }}
-            disabled={!selectedItem || quantity === '' || isInsufficient || isSubmitting}
+            disabled={!selectedItem || quantity === '' || isInsufficient || isSubmitting || remarksTooLong}
           >
             {isSubmitting ? (
               <>

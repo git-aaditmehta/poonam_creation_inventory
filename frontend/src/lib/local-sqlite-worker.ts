@@ -241,6 +241,7 @@ ready = (async () => {
       'ALTER TABLE foil ADD COLUMN cost_price REAL DEFAULT 0',
       'ALTER TABLE foil ADD COLUMN is_low_stock INTEGER DEFAULT 0',
       'ALTER TABLE transactions ADD COLUMN reverses_id TEXT DEFAULT NULL', // Stock undo (2026-11-21)
+      'ALTER TABLE transactions ADD COLUMN remarks TEXT DEFAULT NULL', // Optional remarks on a stock movement (2026-11-27)
     ];
     for (const sql of columnMigrations) {
       try {

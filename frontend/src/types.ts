@@ -75,6 +75,8 @@ export interface Transaction {
   created_at: string;
   /** This entry is an undo of that movement (2026-11-21). */
   reverses_id?: string | null;
+  /** Optional remarks typed with the movement (2026-11-27), e.g. "Sold to Kunalji". */
+  remarks?: string | null;
   /** From the cloud: this movement was undone by … at … */
   undone_by?: string | null;
   undone_at?: string | null;
@@ -106,6 +108,7 @@ export interface StockOperationPayload {
   operation: 'add' | 'subtract';
   quantity: number;
   idempotency_key: string;
+  remarks?: string | null;
 }
 
 export interface StockOperationResponse {

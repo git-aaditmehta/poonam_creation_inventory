@@ -3,6 +3,7 @@ import type { Env, SessionData } from '../types';
 import { authMiddleware } from '../middleware/auth';
 import { generateId } from '../utils/crypto';
 import { validateRequired, validateStrictPositiveNumber, collectErrors, validateWholeNumberFor } from '../utils/validation';
+import { cleanRemarks } from '../utils/remarks';
 
 type AppEnv = { Bindings: Env; Variables: { session: SessionData } };
 
@@ -31,7 +32,7 @@ type ChangeResult =
  */
 async function applyChange(
   env: Env,
-  o: { table: string; category: Category; itemUuid: string; operation: 'add' | 'subtract'; qty: number; idempotencyKey: string; userId: string; username: string; reversesId: string | null },
+  o: { table: string; category: Category; itemUuid: string; operation: 'add' | 'subtract'; qty: number; idempotencyKey: string; userId: string; username: string; reversesId: string | null; remarks: string | null },
 ): Promise<ChangeResult> {
   const { table, category, operation, qty } = o;
   const txId = generateId();
@@ -46,8 +47,8 @@ async function applyChange(
   const beforeExpr = operation === 'add' ? 'ROUND(quantity - ?, 3)' : 'ROUND(quantity + ?, 3)';
   const insertTxSQL = `INSERT INTO transactions
     (id, category, item_id, item_display_id, operation, quantity_before,
-     quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, reverses_id)
-    SELECT ?, ?, id, item_id, ?, ${beforeExpr}, ?, quantity, unit, ?, ?, ?, ?
+     quantity_change, quantity_after, unit, performed_by, performer_name, idempotency_key, reverses_id, remarks)
+    SELECT ?, ?, id, item_id, ?, ${beforeExpr}, ?, quantity, unit, ?, ?, ?, ?, ?
     FROM ${table} WHERE id = ? AND changes() = 1`;
   const itemSyncSQL = `INSERT INTO sync_changes (entity_type, entity_id, operation, payload)
     SELECT ?, id, 'UPDATE', json_object('id', id, 'item_id', item_id, 'quantity', quantity, 'unit', unit, 'updated_at', ?)
@@ -58,12 +59,12 @@ async function applyChange(
       'operation', operation, 'quantity_before', quantity_before, 'quantity_change', quantity_change,
       'quantity_after', quantity_after, 'unit', unit, 'performed_by', performed_by,
       'performer_name', performer_name, 'idempotency_key', idempotency_key, 'created_at', created_at,
-      'reverses_id', reverses_id)
+      'reverses_id', reverses_id, 'remarks', remarks)
     FROM transactions WHERE id = ?`;
   try {
     await env.DB.batch([
       env.DB.prepare(updateSQL).bind(...updateBindings),
-      env.DB.prepare(insertTxSQL).bind(txId, category, operation, qty, qty, o.userId, o.username, o.idempotencyKey, o.reversesId, o.itemUuid),
+      env.DB.prepare(insertTxSQL).bind(txId, category, operation, qty, qty, o.userId, o.username, o.idempotencyKey, o.reversesId, o.remarks, o.itemUuid),
       env.DB.prepare(itemSyncSQL).bind(table, nowIso, o.itemUuid, txId),
       env.DB.prepare(txSyncSQL).bind(txId),
     ]);
@@ -111,6 +112,7 @@ stock.post('/operate', authMiddleware, async (c) => {
     operation?: string;
     quantity?: number;
     idempotency_key?: string;
+    remarks?: string | null;
   }>();
 
   // --- Validate input ---
@@ -129,7 +131,10 @@ stock.post('/operate', authMiddleware, async (c) => {
   if (body.operation && !['add', 'subtract'].includes(body.operation)) {
     errors.push({ field: 'operation', message: 'Operation must be "add" or "subtract"' });
   }
-  if (errors.length > 0) return c.json({ errors }, 400);
+  // Optional remarks (2026-11-27): at most 50 words; empty = none
+  const remarks = cleanRemarks(body.remarks);
+  if (remarks && typeof remarks === 'object') errors.push({ field: 'remarks', message: remarks.error });
+  if (errors.length > 0) return c.json({ errors, error: errors.map((e) => e.message).join(', ') }, 400);
 
   const category = body.category as Category;
   const table = CATEGORY_TABLE[category];
@@ -176,7 +181,7 @@ stock.post('/operate', authMiddleware, async (c) => {
 
   const done = await applyChange(c.env, {
     table, category, itemUuid: item.id, operation, qty: changeQty, idempotencyKey,
-    userId: session.userId, username: session.username, reversesId: null,
+    userId: session.userId, username: session.username, reversesId: null, remarks: remarks as string | null,
   });
   if ('error' in done) return c.json(done.body, done.status);
   const { txId, tx } = done;
@@ -193,6 +198,7 @@ stock.post('/operate', authMiddleware, async (c) => {
     quantity_change: tx.quantity_change,
     new_balance: tx.quantity_after,
     unit: item.unit,
+    remarks: remarks as string | null,
   });
 });
 
@@ -214,10 +220,10 @@ stock.post('/undo', authMiddleware, async (c) => {
   if (!ref) return c.json({ error: 'Choose the stock operation to undo.' }, 400);
 
   const orig = await c.env.DB.prepare(
-    `SELECT id, category, item_id, item_display_id, operation, quantity_change, unit, performed_by, performer_name, reverses_id,
+    `SELECT id, category, item_id, item_display_id, operation, quantity_change, unit, performed_by, performer_name, reverses_id, remarks,
             datetime(created_at) >= datetime('now', '-${UNDO_DAYS} days') AS recent
      FROM transactions WHERE id = ? OR idempotency_key = ? LIMIT 1`
-  ).bind(ref, ref).first<{ id: string; category: Category; item_id: string; item_display_id: string; operation: 'add' | 'subtract'; quantity_change: number; unit: string; performed_by: string; performer_name: string; reverses_id: string | null; recent: number }>();
+  ).bind(ref, ref).first<{ id: string; category: Category; item_id: string; item_display_id: string; operation: 'add' | 'subtract'; quantity_change: number; unit: string; performed_by: string; performer_name: string; reverses_id: string | null; remarks: string | null; recent: number }>();
   if (!orig) return c.json({ error: 'This stock operation has not reached the cloud yet, or its history was cleared. If it is still in Sync Queue, wait a moment and try again.', code: 'not_in_cloud' }, 404);
   const id = orig.id;
   if (orig.reverses_id) return c.json({ error: 'This entry is itself an undo and cannot be undone. If needed, make a new stock operation.' }, 400);
@@ -240,6 +246,8 @@ stock.post('/undo', authMiddleware, async (c) => {
     userId: session.userId,
     username: session.username,
     reversesId: orig.id,
+    // The undo line says what it undid, so the history stays readable
+    remarks: orig.remarks ? `Undo of: ${orig.remarks}`.slice(0, 500) : null,
   });
   if ('error' in done) {
     if (done.status === 404) {

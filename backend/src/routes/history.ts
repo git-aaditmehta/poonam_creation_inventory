@@ -22,6 +22,7 @@ history.get('/', async (c) => {
   const dateTo = c.req.query('date_to');
   const itemSearch = c.req.query('item_search');
   const itemUuid = c.req.query('item_uuid'); // one item's own history (item details)
+  const remarkSearch = (c.req.query('remark_search') || '').trim().slice(0, 100); // words in the remarks (2026-11-27)
   // lite=1: just the newest rows (Recent operations, item history). No total count / per-unit totals, which read
   // the whole history every time (agreed 2026-11-24, protects the free daily read limit as history grows).
   const lite = c.req.query('lite') === '1';
@@ -56,6 +57,11 @@ history.get('/', async (c) => {
       ? ` AND (item_display_id LIKE ? OR REPLACE(REPLACE(UPPER(TRIM(item_display_id)), ' ', ''), '-', '') LIKE ?)`
       : ' AND item_display_id LIKE ?';
     params.push(`%${itemSearch}%`, ...(key ? [`%${key}%`] : []));
+  }
+
+  if (remarkSearch) {
+    whereClause += ' AND remarks LIKE ?';
+    params.push(`%${remarkSearch}%`);
   }
 
   if (lite) {

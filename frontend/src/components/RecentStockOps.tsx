@@ -129,6 +129,7 @@ export const RecentStockOps: React.FC<{ user: User | null }> = ({ user }) => {
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                     {t.performer_name} · {formatIST(t.created_at)} · balance {n(t.quantity_before)} → {n(t.quantity_after)}
                   </div>
+                  {t.remarks && <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2, fontStyle: 'italic' }}>“{t.remarks}”</div>}
                 </div>
                 {!blocked ? (
                   <button type="button" className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }} onClick={() => undo(t)} disabled={busy !== null}>

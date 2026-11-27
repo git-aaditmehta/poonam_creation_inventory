@@ -18,7 +18,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 export interface HistoryPdfOptions {
   rows: Transaction[];
-  filters: { category?: string; dateFrom?: string; dateTo?: string; itemSearch?: string };
+  filters: { category?: string; dateFrom?: string; dateTo?: string; itemSearch?: string; remarkSearch?: string };
   /** false = offline copy on this phone (recent entries only): printed on the PDF. */
   complete: boolean;
 }
@@ -34,6 +34,7 @@ export function filtersText(f: HistoryPdfOptions['filters']): string {
   else if (f.dateTo) parts.push(`Dates: up to ${day(f.dateTo)}`);
   else parts.push('Dates: all');
   if (f.itemSearch?.trim()) parts.push(`Item code: "${f.itemSearch.trim()}"`);
+  if (f.remarkSearch?.trim()) parts.push(`Remarks contain: "${f.remarkSearch.trim()}"`);
   return parts.join('   |   ');
 }
 
@@ -80,7 +81,7 @@ export function generateHistoryPdf({ rows, filters, complete }: HistoryPdfOption
 
   autoTable(doc, {
     startY: y + 4,
-    head: [['#', 'Date & time (IST)', 'Category', 'Item code', 'Operation', 'Qty', 'Unit', 'Before', 'After', 'Done by']],
+    head: [['#', 'Date & time (IST)', 'Category', 'Item code', 'Operation', 'Qty', 'Unit', 'Before', 'After', 'Done by', 'Remarks']],
     body: rows.map((t, i) => [
       String(i + 1),
       formatIST(t.created_at),
@@ -92,6 +93,7 @@ export function generateHistoryPdf({ rows, filters, complete }: HistoryPdfOption
       num(Number(t.quantity_before)),
       num(Number(t.quantity_after)),
       t.performer_name || t.performed_by || '',
+      t.remarks || '',
     ]),
     theme: 'striped',
     styles: { fontSize: 8, cellPadding: 1.6, overflow: 'linebreak' },
